@@ -66,19 +66,28 @@ impl<'de> Lexer<'de> {
             len,
         }
     }
+
+    fn advance(&mut self, len: usize) {
+        self.rest = &self.rest[len..];
+        self.byte += len;
+    }
 }
 
 impl<'de> Iterator for Lexer<'de> {
     type Item = miette::Result<Token<'de>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Skips whitespace, then gets first character
-        let mut chars = self.rest.trim_start().chars();
-        let c = chars.next()?;
-        let text = &self.rest[..c.len_utf8()];
+        // Skip whitespace
+        let rest = self.rest.trim_start();
+        self.advance(self.rest.len() - rest.len());
 
-        self.rest = chars.as_str();
-        self.byte += c.len_utf8();
+        // Consider first character
+        let mut chars = rest.chars();
+        let c = chars.next()?;
+        let c_len = c.len_utf8();
+        let text = &self.rest[..c_len];
+
+        self.advance(c_len));
 
         let error = |diag: MietteDiagnostic| {
             Some(Err(diag
