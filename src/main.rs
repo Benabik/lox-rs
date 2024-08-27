@@ -33,7 +33,6 @@ fn main() -> miette::Result<()> {
                     Err(e) => {
                         error = true;
                         eprintln!("{e}"); // Simple for test requirements
-                        eprintln!("{e:?}"); // Miette details
                     }
                 }
             }
