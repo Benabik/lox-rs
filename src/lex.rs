@@ -31,6 +31,7 @@ pub enum TokenKind {
     SLASH,
     STRING,
     NUMBER,
+    IDENTIFIER,
 }
 
 impl TokenKind {
@@ -182,6 +183,7 @@ impl<'de> Iterator for Lexer<'de> {
                 Equals(TokenKind, TokenKind),
                 String,
                 Number,
+                Identifier,
             }
 
             let started = match c {
@@ -206,6 +208,9 @@ impl<'de> Iterator for Lexer<'de> {
                 // Longer tokens
                 '"' => Started::String,
                 '0'..='9' => Started::Number,
+
+                '_' => Started::Identifier,
+                c if c.is_ascii_alphabetic() => Started::Identifier,
 
                 // Maybe comment: special case here to reuse Single machinery later
                 '/' => {
@@ -306,6 +311,24 @@ impl<'de> Iterator for Lexer<'de> {
                     Token {
                         text,
                         kind: TokenKind::NUMBER,
+                        origin,
+                    }
+                }
+                Started::Identifier => {
+                    // Find length of identifier by finding end of valid characters
+                    let len = self
+                        .rest
+                        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                        .unwrap_or(self.rest.len());
+                    let text = &self.rest[..len];
+                    self.advance(len);
+                    let origin = self.source_loc(len);
+
+                    // TODO: Keywords
+
+                    Token {
+                        text,
+                        kind: TokenKind::IDENTIFIER,
                         origin,
                     }
                 }
