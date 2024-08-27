@@ -2,7 +2,7 @@ use miette::{Diagnostic, Report, SourceSpan};
 use std::fmt::Display;
 use thiserror::Error;
 
-use super::SourceLoc;
+use crate::{SourceLoc, WithSourceLoc};
 
 /// The basic kind of a [Token] for matching
 ///
@@ -30,11 +30,21 @@ pub enum TokenKind {
     EQUAL_EQUAL,
     SLASH,
     STRING,
+    NUMBER,
 }
 
 impl TokenKind {
     fn to_str(&self, text: &str) -> String {
         match self {
+            TokenKind::NUMBER => {
+                let value: f64 = text.parse().expect("Lexing should ensure valid number");
+                // Not sure how else to ensure a precision of >= 1 instead of exactly 1.
+                if value.fract() != 0.0 {
+                    format!("{value}")
+                } else {
+                    format!("{value}.0")
+                }
+            }
             TokenKind::STRING => text.trim_matches('"').into(),
             _ => "null".into(),
         }
@@ -171,6 +181,7 @@ impl<'de> Iterator for Lexer<'de> {
                 Single(TokenKind),
                 Equals(TokenKind, TokenKind),
                 String,
+                Number,
             }
 
             let started = match c {
@@ -194,6 +205,7 @@ impl<'de> Iterator for Lexer<'de> {
 
                 // Longer tokens
                 '"' => Started::String,
+                '0'..='9' => Started::Number,
 
                 // Maybe comment: special case here to reuse Single machinery later
                 '/' => {
@@ -258,6 +270,43 @@ impl<'de> Iterator for Lexer<'de> {
                         // Consume rest of source
                         self.rest = &self.rest[self.rest.len()..];
                         return Some(Err(UnterminatedStringError::new(loc)));
+                    }
+                }
+                Started::Number => {
+                    // Find length of number by finding end of numbers
+                    let len = self
+                        .rest
+                        .find(|c| !matches!(c, '.' | '0'..='9'))
+                        .unwrap_or(self.rest.len());
+                    let mut text = &self.rest[..len];
+
+                    // Use jonhoo's solution for removing excess .
+                    let mut dotted = text.splitn(3, '.');
+                    match (dotted.next(), dotted.next(), dotted.next()) {
+                        (Some(one), Some(two), Some(_)) => {
+                            text = &text[..one.len() + 1 + two.len()];
+                        }
+                        (Some(one), Some(two), None) if two.is_empty() => {
+                            text = &text[..one.len()];
+                        }
+                        _ => { /* leave text as-is */ }
+                    }
+
+                    let len = text.len();
+                    self.advance(len);
+                    let origin = self.source_loc(len);
+
+                    // This might be paranoid, as I think anything that gets here is a valid number
+                    if text.parse::<f64>().is_err() {
+                        return Some(Err(
+                            miette::diagnostic!("malformed number").with_source_loc(origin)
+                        ));
+                    }
+
+                    Token {
+                        text,
+                        kind: TokenKind::NUMBER,
+                        origin,
                     }
                 }
             };
