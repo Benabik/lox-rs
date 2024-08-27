@@ -1,4 +1,4 @@
-use miette::{Diagnostic, SourceSpan};
+use miette::{Diagnostic, Report, SourceSpan};
 use std::fmt::Display;
 use thiserror::Error;
 
@@ -29,14 +29,15 @@ pub enum TokenKind {
     EQUAL,
     EQUAL_EQUAL,
     SLASH,
+    STRING,
 }
 
 impl TokenKind {
-    fn to_str(&self, _text: &str) -> String {
+    fn to_str(&self, text: &str) -> String {
         match self {
-            _ => "null",
+            TokenKind::STRING => text.trim_matches('"').into(),
+            _ => "null".into(),
         }
-        .into()
     }
 }
 
@@ -61,6 +62,24 @@ impl<'de> Display for Token<'de> {
     }
 }
 
+/// Makes it easy to get a line number for errors.
+pub trait ErrorLine {
+    fn try_line(&self) -> Option<usize>;
+
+    fn line(&self) -> usize {
+        self.try_line().unwrap_or(0)
+    }
+}
+
+impl<T: miette::Diagnostic> ErrorLine for T {
+    fn try_line(&self) -> Option<usize> {
+        let offset = self.labels()?.next()?.offset();
+        let span = SourceSpan::new(0.into(), offset + 1);
+        let contents = self.source_code()?.read_span(&span, 0, 0).ok()?;
+        Some(contents.line())
+    }
+}
+
 #[derive(Diagnostic, Debug, Error)]
 #[error("[line {}] Error: Unexpected character: {c}", self.line())]
 pub struct UnexpectedCharError {
@@ -74,16 +93,33 @@ pub struct UnexpectedCharError {
 }
 
 impl UnexpectedCharError {
-    pub fn new(c: char, loc: SourceLoc) -> Self {
+    fn new(c: char, loc: SourceLoc) -> Report {
         Self {
             c,
             src: loc.source.to_string(),
             span: SourceSpan::new(loc.offset.into(), loc.len),
         }
+        .into()
     }
+}
 
-    pub fn line(&self) -> usize {
-        self.src[..=self.span.offset()].lines().count()
+#[derive(Diagnostic, Debug, Error)]
+#[error("[line {}] Error: Unterminated string.", self.line())]
+pub struct UnterminatedStringError {
+    #[source_code]
+    src: String,
+
+    #[label = "here"]
+    span: SourceSpan,
+}
+
+impl UnterminatedStringError {
+    fn new(loc: SourceLoc) -> Report {
+        Self {
+            src: loc.source.to_string(),
+            span: SourceSpan::new(loc.offset.into(), loc.len),
+        }
+        .into()
     }
 }
 
@@ -121,7 +157,8 @@ impl<'de> Iterator for Lexer<'de> {
     type Item = miette::Result<Token<'de>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop { // Mostly to allow looping after a comment
+        loop {
+            // Mostly to allow looping after a comment
             // Skip whitespace
             let rest = self.rest.trim_start();
             self.advance(self.rest.len() - rest.len());
@@ -134,6 +171,7 @@ impl<'de> Iterator for Lexer<'de> {
             enum Started {
                 Single(TokenKind),
                 Equals(TokenKind, TokenKind),
+                String,
             }
 
             let started = match c {
@@ -155,6 +193,9 @@ impl<'de> Iterator for Lexer<'de> {
                 '!' => Started::Equals(TokenKind::BANG, TokenKind::BANG_EQUAL),
                 '=' => Started::Equals(TokenKind::EQUAL, TokenKind::EQUAL_EQUAL),
 
+                // Longer tokens
+                '"' => Started::String,
+
                 // Maybe comment: special case here to reuse Single machinery later
                 '/' => {
                     if let Some('/') = chars.next() {
@@ -169,9 +210,7 @@ impl<'de> Iterator for Lexer<'de> {
 
                 _ => {
                     self.advance(c_len);
-                    return Some(Err(
-                        UnexpectedCharError::new(c, self.source_loc(c_len)).into()
-                    ));
+                    return Some(Err(UnexpectedCharError::new(c, self.source_loc(c_len))));
                 }
             };
 
@@ -202,8 +241,23 @@ impl<'de> Iterator for Lexer<'de> {
                         origin: self.source_loc(len),
                     }
                 }
+                Started::String => {
+                    if let Some(end) = self.rest[1..].find('"') {
+                        let len = end + 2; // Need to add both quotes
+                        let text = &self.rest[..len];
+                        self.advance(len);
+                        Token {
+                            text,
+                            kind: TokenKind::STRING,
+                            origin: self.source_loc(len),
+                        }
+                    } else {
+                        self.advance(1);
+                        return Some(Err(UnterminatedStringError::new(self.source_loc(1))));
+                    }
+                }
             };
-            return Some(Ok(token))
+            return Some(Ok(token));
         }
     }
 }
