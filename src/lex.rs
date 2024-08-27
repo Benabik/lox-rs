@@ -84,28 +84,36 @@ impl<'de> Iterator for Lexer<'de> {
         // Consider first character
         let mut chars = rest.chars();
         let c = chars.next()?;
+
+        enum Started {
+            Single(TokenKind),
+            Err(MietteDiagnostic),
+        }
+
+        let started = match c {
+            '(' => Started::Single(TokenKind::LEFT_PAREN),
+            ')' => Started::Single(TokenKind::RIGHT_PAREN),
+            _ => Started::Err(miette::diagnostic!("unexpected character {c:?}")),
+        };
+
+        // Common case
         let c_len = c.len_utf8();
-        let text = &self.rest[..c_len];
+        let c_str = &self.rest[..c_len];
+        self.advance(c_len);
 
-        self.advance(c_len));
-
-        let error = |diag: MietteDiagnostic| {
-            Some(Err(diag
-                    .with_source_loc(self.source_loc(text.len()))
-                    .into()))
-        };
-        let token = |kind: TokenKind| {
-            Some(Ok(Token {
-                text,
-                kind,
-                origin: self.source_loc(text.len()),
-            }))
-        };
-
-        return match c {
-            '(' => token(TokenKind::LEFT_PAREN),
-            ')' => token(TokenKind::RIGHT_PAREN),
-            _ => error(miette::diagnostic!("unexpected character {c:?}")),
-        };
+        match started {
+            Started::Single(kind) => {
+                Some(Ok(Token {
+                    text: c_str,
+                    kind,
+                    origin: self.source_loc(c_len),
+                }))
+            },
+            Started::Err(diag) => {
+                Some(Err(diag
+                        .with_source_loc(self.source_loc(c_len))
+                        .into()))
+            }
+        }
     }
 }
