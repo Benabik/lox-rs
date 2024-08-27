@@ -73,10 +73,9 @@ pub trait ErrorLine {
 
 impl<T: miette::Diagnostic> ErrorLine for T {
     fn try_line(&self) -> Option<usize> {
-        let offset = self.labels()?.next()?.offset();
-        let span = SourceSpan::new(0.into(), offset + 1);
-        let contents = self.source_code()?.read_span(&span, 0, 0).ok()?;
-        Some(contents.line())
+        let span = self.labels()?.next()?;
+        let contents = self.source_code()?.read_span(span.inner(), 0, 0).ok()?;
+        Some(contents.line() + 1)
     }
 }
 
