@@ -32,6 +32,21 @@ pub enum TokenKind {
     STRING,
     NUMBER,
     IDENTIFIER,
+    AND,
+    CLASS,
+    ELSE,
+    FALSE,
+    FOR,
+    FUN,
+    IF,
+    NIL,
+    OR,
+    RETURN,
+    SUPER,
+    THIS,
+    TRUE,
+    VAR,
+    WHILE,
 }
 
 impl TokenKind {
@@ -324,13 +339,26 @@ impl<'de> Iterator for Lexer<'de> {
                     self.advance(len);
                     let origin = self.source_loc(len);
 
-                    // TODO: Keywords
-
-                    Token {
-                        text,
-                        kind: TokenKind::IDENTIFIER,
-                        origin,
-                    }
+                    // Check for keywords
+                    let kind = match text {
+                        "and" => TokenKind::AND,
+                        "class" => TokenKind::CLASS,
+                        "else" => TokenKind::ELSE,
+                        "false" => TokenKind::FALSE,
+                        "for" => TokenKind::FOR,
+                        "fun" => TokenKind::FUN,
+                        "if" => TokenKind::IF,
+                        "nil" => TokenKind::NIL,
+                        "or" => TokenKind::OR,
+                        "return" => TokenKind::RETURN,
+                        "super" => TokenKind::SUPER,
+                        "this" => TokenKind::THIS,
+                        "true" => TokenKind::TRUE,
+                        "var" => TokenKind::VAR,
+                        "while" => TokenKind::WHILE,
+                        _ => TokenKind::IDENTIFIER,
+                    };
+                    Token { text, kind, origin }
                 }
             };
             return Some(Ok(token));
