@@ -11,6 +11,14 @@ use super::{SourceLoc, WithSourceLoc};
 pub enum TokenKind {
     LEFT_PAREN,
     RIGHT_PAREN,
+    LEFT_BRACE,
+    RIGHT_BRACE,
+    COMMA,
+    DOT,
+    MINUS,
+    PLUS,
+    SEMICOLON,
+    STAR,
 }
 
 impl TokenKind {
@@ -91,8 +99,19 @@ impl<'de> Iterator for Lexer<'de> {
         }
 
         let started = match c {
+            // Unambiguous single character tokens
             '(' => Started::Single(TokenKind::LEFT_PAREN),
             ')' => Started::Single(TokenKind::RIGHT_PAREN),
+            '{' => Started::Single(TokenKind::LEFT_BRACE),
+            '}' => Started::Single(TokenKind::RIGHT_BRACE),
+            ',' => Started::Single(TokenKind::COMMA),
+            '.' => Started::Single(TokenKind::DOT),
+            '-' => Started::Single(TokenKind::MINUS),
+            '+' => Started::Single(TokenKind::PLUS),
+            ';' => Started::Single(TokenKind::SEMICOLON),
+            '*' => Started::Single(TokenKind::STAR),
+
+
             _ => Started::Err(miette::diagnostic!("unexpected character {c:?}")),
         };
 
