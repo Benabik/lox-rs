@@ -74,7 +74,7 @@ impl UnexpectedCharError {
     }
 
     pub fn line(&self) -> usize {
-        self.src[..self.span.offset()].lines().count()
+        self.src[..=self.span.offset()].lines().count()
     }
 }
 
