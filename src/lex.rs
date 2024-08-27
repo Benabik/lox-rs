@@ -53,7 +53,7 @@ impl<'de> Display for Token<'de> {
 }
 
 #[derive(Diagnostic, Debug, Error)]
-#[error("[line {}] Unexpected character: {c}", self.line())]
+#[error("[line {}] Error: Unexpected character: {c}", self.line())]
 pub struct UnexpectedCharError {
     pub c: char,
 
