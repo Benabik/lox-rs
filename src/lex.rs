@@ -1,7 +1,8 @@
-use miette::MietteDiagnostic;
+use miette::{Diagnostic, SourceSpan};
 use std::fmt::Display;
+use thiserror::Error;
 
-use super::{SourceLoc, WithSourceLoc};
+use super::SourceLoc;
 
 /// The basic kind of a [Token] for matching
 ///
@@ -51,6 +52,32 @@ impl<'de> Display for Token<'de> {
     }
 }
 
+#[derive(Diagnostic, Debug, Error)]
+#[error("[line {}] Unexpected character: {c}", self.line())]
+pub struct UnexpectedCharError {
+    pub c: char,
+
+    #[source_code]
+    src: String,
+
+    #[label = "here"]
+    span: SourceSpan,
+}
+
+impl UnexpectedCharError {
+    pub fn new(c: char, loc: SourceLoc) -> Self {
+        Self {
+            c,
+            src: loc.source.to_string(),
+            span: SourceSpan::new(loc.offset.into(), loc.len),
+        }
+    }
+
+    pub fn line(&self) -> usize {
+        self.src[..self.span.offset()].lines().count()
+    }
+}
+
 /// Holds the state of lexing source code
 pub struct Lexer<'de> {
     source: &'de str,
@@ -92,10 +119,10 @@ impl<'de> Iterator for Lexer<'de> {
         // Consider first character
         let mut chars = rest.chars();
         let c = chars.next()?;
+        let c_len = c.len_utf8();
 
         enum Started {
             Single(TokenKind),
-            Err(MietteDiagnostic),
         }
 
         let started = match c {
@@ -112,27 +139,24 @@ impl<'de> Iterator for Lexer<'de> {
             '*' => Started::Single(TokenKind::STAR),
 
 
-            _ => Started::Err(miette::diagnostic!("unexpected character {c:?}")),
+            _ => {
+                self.advance(c_len);
+                return Some(Err(
+                    UnexpectedCharError::new(c, self.source_loc(c_len)).into()
+                ));
+            }
         };
 
         // Common case
-        let c_len = c.len_utf8();
         let c_str = &self.rest[..c_len];
         self.advance(c_len);
 
         match started {
-            Started::Single(kind) => {
-                Some(Ok(Token {
-                    text: c_str,
-                    kind,
-                    origin: self.source_loc(c_len),
-                }))
-            },
-            Started::Err(diag) => {
-                Some(Err(diag
-                        .with_source_loc(self.source_loc(c_len))
-                        .into()))
-            }
+            Started::Single(kind) => Some(Ok(Token {
+                text: c_str,
+                kind,
+                origin: self.source_loc(c_len),
+            })),
         }
     }
 }

@@ -5,7 +5,6 @@ use miette::{IntoDiagnostic, WrapErr};
 use std::fs;
 use std::path::PathBuf;
 
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -27,13 +26,21 @@ fn main() -> miette::Result<()> {
                 .wrap_err_with(|| format!("reading '{}' failed", filename.display()))?;
 
             let lexer = imp::Lexer::new(&file_contents);
+            let mut error = false;
             for token in lexer {
                 match token {
                     Ok(token) => println!("{token}"),
-                    Err(e) => eprintln!("{e:?}"),
+                    Err(e) => {
+                        error = true;
+                        eprintln!("{e}"); // Simple for test requirements
+                        eprintln!("{e:?}"); // Miette details
+                    }
                 }
             }
             println!("EOF  null");
+            if error {
+                std::process::exit(65);
+            }
             Ok(())
         }
     }
