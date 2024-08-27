@@ -251,8 +251,13 @@ impl<'de> Iterator for Lexer<'de> {
                             origin: self.source_loc(len),
                         }
                     } else {
+                        // Get location of quote
                         self.advance(1);
-                        return Some(Err(UnterminatedStringError::new(self.source_loc(1))));
+                        let loc = self.source_loc(1);
+
+                        // Consume rest of source
+                        self.rest = &self.rest[self.rest.len()..];
+                        return Some(Err(UnterminatedStringError::new(loc)));
                     }
                 }
             };
