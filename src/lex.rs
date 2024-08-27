@@ -20,6 +20,14 @@ pub enum TokenKind {
     PLUS,
     SEMICOLON,
     STAR,
+    LESS,
+    LESS_EQUAL,
+    GREATER,
+    GREATER_EQUAL,
+    BANG,
+    BANG_EQUAL,
+    EQUAL,
+    EQUAL_EQUAL,
 }
 
 impl TokenKind {
@@ -123,6 +131,7 @@ impl<'de> Iterator for Lexer<'de> {
 
         enum Started {
             Single(TokenKind),
+            Equals(TokenKind, TokenKind),
         }
 
         let started = match c {
@@ -138,6 +147,11 @@ impl<'de> Iterator for Lexer<'de> {
             ';' => Started::Single(TokenKind::SEMICOLON),
             '*' => Started::Single(TokenKind::STAR),
 
+            // Comparison operators (may be followed by =)
+            '<' => Started::Equals(TokenKind::LESS, TokenKind::LESS_EQUAL),
+            '>' => Started::Equals(TokenKind::GREATER, TokenKind::GREATER_EQUAL),
+            '!' => Started::Equals(TokenKind::BANG, TokenKind::BANG_EQUAL),
+            '=' => Started::Equals(TokenKind::EQUAL, TokenKind::EQUAL_EQUAL),
 
             _ => {
                 self.advance(c_len);
@@ -147,16 +161,26 @@ impl<'de> Iterator for Lexer<'de> {
             }
         };
 
-        // Common case
-        let c_str = &self.rest[..c_len];
-        self.advance(c_len);
+        let token = match started {
+            Started::Single(kind) => {
+                let text = &self.rest[..c_len];
+                self.advance(c_len);
 
-        match started {
-            Started::Single(kind) => Some(Ok(Token {
-                text: c_str,
-                kind,
-                origin: self.source_loc(c_len),
-            })),
-        }
+                Token { text, kind, origin: self.source_loc(c_len) }
+            }
+            Started::Equals(single, equals) => {
+                let (len, kind) = if let Some('=') = chars.next() {
+                    (c_len + 1, equals)
+                } else {
+                    (c_len, single)
+                };
+
+                let text = &self.rest[..len];
+                self.advance(len);
+
+                Token { text, kind, origin: self.source_loc(len) }
+            }
+        };
+        Some(Ok(token))
     }
 }
