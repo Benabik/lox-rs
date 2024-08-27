@@ -28,6 +28,7 @@ pub enum TokenKind {
     BANG_EQUAL,
     EQUAL,
     EQUAL_EQUAL,
+    SLASH,
 }
 
 impl TokenKind {
@@ -120,67 +121,89 @@ impl<'de> Iterator for Lexer<'de> {
     type Item = miette::Result<Token<'de>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Skip whitespace
-        let rest = self.rest.trim_start();
-        self.advance(self.rest.len() - rest.len());
+        loop { // Mostly to allow looping after a comment
+            // Skip whitespace
+            let rest = self.rest.trim_start();
+            self.advance(self.rest.len() - rest.len());
 
-        // Consider first character
-        let mut chars = rest.chars();
-        let c = chars.next()?;
-        let c_len = c.len_utf8();
+            // Consider first character
+            let mut chars = rest.chars();
+            let c = chars.next()?;
+            let c_len = c.len_utf8();
 
-        enum Started {
-            Single(TokenKind),
-            Equals(TokenKind, TokenKind),
+            enum Started {
+                Single(TokenKind),
+                Equals(TokenKind, TokenKind),
+            }
+
+            let started = match c {
+                // Unambiguous single character tokens
+                '(' => Started::Single(TokenKind::LEFT_PAREN),
+                ')' => Started::Single(TokenKind::RIGHT_PAREN),
+                '{' => Started::Single(TokenKind::LEFT_BRACE),
+                '}' => Started::Single(TokenKind::RIGHT_BRACE),
+                ',' => Started::Single(TokenKind::COMMA),
+                '.' => Started::Single(TokenKind::DOT),
+                '-' => Started::Single(TokenKind::MINUS),
+                '+' => Started::Single(TokenKind::PLUS),
+                ';' => Started::Single(TokenKind::SEMICOLON),
+                '*' => Started::Single(TokenKind::STAR),
+
+                // Comparison operators (may be followed by =)
+                '<' => Started::Equals(TokenKind::LESS, TokenKind::LESS_EQUAL),
+                '>' => Started::Equals(TokenKind::GREATER, TokenKind::GREATER_EQUAL),
+                '!' => Started::Equals(TokenKind::BANG, TokenKind::BANG_EQUAL),
+                '=' => Started::Equals(TokenKind::EQUAL, TokenKind::EQUAL_EQUAL),
+
+                // Maybe comment: special case here to reuse Single machinery later
+                '/' => {
+                    if let Some('/') = chars.next() {
+                        // Advance until newline...
+                        let line_end = self.rest.find('\n').unwrap_or_else(|| self.rest.len());
+                        self.advance(line_end);
+                        continue;
+                    } else {
+                        Started::Single(TokenKind::SLASH)
+                    }
+                }
+
+                _ => {
+                    self.advance(c_len);
+                    return Some(Err(
+                        UnexpectedCharError::new(c, self.source_loc(c_len)).into()
+                    ));
+                }
+            };
+
+            let token = match started {
+                Started::Single(kind) => {
+                    let text = &self.rest[..c_len];
+                    self.advance(c_len);
+
+                    Token {
+                        text,
+                        kind,
+                        origin: self.source_loc(c_len),
+                    }
+                }
+                Started::Equals(single, equals) => {
+                    let (len, kind) = if let Some('=') = chars.next() {
+                        (c_len + 1, equals)
+                    } else {
+                        (c_len, single)
+                    };
+
+                    let text = &self.rest[..len];
+                    self.advance(len);
+
+                    Token {
+                        text,
+                        kind,
+                        origin: self.source_loc(len),
+                    }
+                }
+            };
+            return Some(Ok(token))
         }
-
-        let started = match c {
-            // Unambiguous single character tokens
-            '(' => Started::Single(TokenKind::LEFT_PAREN),
-            ')' => Started::Single(TokenKind::RIGHT_PAREN),
-            '{' => Started::Single(TokenKind::LEFT_BRACE),
-            '}' => Started::Single(TokenKind::RIGHT_BRACE),
-            ',' => Started::Single(TokenKind::COMMA),
-            '.' => Started::Single(TokenKind::DOT),
-            '-' => Started::Single(TokenKind::MINUS),
-            '+' => Started::Single(TokenKind::PLUS),
-            ';' => Started::Single(TokenKind::SEMICOLON),
-            '*' => Started::Single(TokenKind::STAR),
-
-            // Comparison operators (may be followed by =)
-            '<' => Started::Equals(TokenKind::LESS, TokenKind::LESS_EQUAL),
-            '>' => Started::Equals(TokenKind::GREATER, TokenKind::GREATER_EQUAL),
-            '!' => Started::Equals(TokenKind::BANG, TokenKind::BANG_EQUAL),
-            '=' => Started::Equals(TokenKind::EQUAL, TokenKind::EQUAL_EQUAL),
-
-            _ => {
-                self.advance(c_len);
-                return Some(Err(
-                    UnexpectedCharError::new(c, self.source_loc(c_len)).into()
-                ));
-            }
-        };
-
-        let token = match started {
-            Started::Single(kind) => {
-                let text = &self.rest[..c_len];
-                self.advance(c_len);
-
-                Token { text, kind, origin: self.source_loc(c_len) }
-            }
-            Started::Equals(single, equals) => {
-                let (len, kind) = if let Some('=') = chars.next() {
-                    (c_len + 1, equals)
-                } else {
-                    (c_len, single)
-                };
-
-                let text = &self.rest[..len];
-                self.advance(len);
-
-                Token { text, kind, origin: self.source_loc(len) }
-            }
-        };
-        Some(Ok(token))
     }
 }
