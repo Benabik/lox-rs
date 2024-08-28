@@ -46,6 +46,7 @@ impl Display for LiteralValue<'_> {
                     write!(f, "{value}.0")
                 }
             }
+            // It seems like you should have to output a quoted value here, but that fails tests
             LiteralValue::String(value) => write!(f, "{value}"),
             LiteralValue::Boolean(value) => write!(f, "{value}"),
             LiteralValue::Nil => write!(f, "nil"),
@@ -130,7 +131,7 @@ impl<'de> Parser<'de> {
                 let value: f64 = text.parse().expect("valid from parsing");
                 Literal::new(value, origin).into()
             }
-            TokenKind::STRING => Literal::new(text, origin).into(),
+            TokenKind::STRING => Literal::new(text.trim_matches('"'), origin).into(),
             TokenKind::TRUE => Literal::new(true, origin).into(),
             TokenKind::FALSE => Literal::new(false, origin).into(),
             TokenKind::NIL => Literal::new(LiteralValue::Nil, origin).into(),
