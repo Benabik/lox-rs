@@ -71,9 +71,9 @@ impl TokenKind {
 /// A lexed token
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Token<'de> {
-    kind: TokenKind,
-    text: &'de str,
-    origin: SourceLoc<'de>,
+    pub kind: TokenKind,
+    pub text: &'de str,
+    pub origin: SourceLoc<'de>,
 }
 
 impl<'de> Display for Token<'de> {
@@ -163,6 +163,10 @@ impl<'de> Lexer<'de> {
             rest: source,
             byte: 0,
         }
+    }
+
+    pub fn source(&self) -> &'de str {
+        self.source
     }
 
     fn source_loc(&self, len: usize) -> SourceLoc<'de> {

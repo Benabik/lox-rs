@@ -1,5 +1,9 @@
 pub mod lex;
 pub use lex::Lexer;
+
+pub mod parser;
+pub use parser::Parser;
+
 use miette::{LabeledSpan, MietteDiagnostic, Report};
 
 /// Holds a reference to the source code with position information
@@ -10,6 +14,12 @@ pub struct SourceLoc<'de> {
     pub source: &'de str,
     pub offset: usize,
     pub len: usize,
+}
+
+impl Into<miette::SourceSpan> for SourceLoc<'_> {
+    fn into(self) -> miette::SourceSpan {
+        miette::SourceSpan::new(self.offset.into(), self.len)
+    }
 }
 
 /// Add source information from a [SourceLoc] to a [MietteDiagnostic]
