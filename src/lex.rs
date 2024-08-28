@@ -154,6 +154,7 @@ pub struct Lexer<'de> {
     source: &'de str,
     rest: &'de str,
     byte: usize,
+    peeked: Option<miette::Result<Token<'de>>>,
 }
 
 impl<'de> Lexer<'de> {
@@ -162,6 +163,7 @@ impl<'de> Lexer<'de> {
             source,
             rest: source,
             byte: 0,
+            peeked: None,
         }
     }
 
@@ -181,12 +183,23 @@ impl<'de> Lexer<'de> {
         self.rest = &self.rest[len..];
         self.byte += len;
     }
+
+    pub fn peek(&mut self) -> &Option<miette::Result<Token<'de>>> {
+        if self.peeked.is_none() {
+            self.peeked = self.next();
+        }
+        &self.peeked
+    }
 }
 
 impl<'de> Iterator for Lexer<'de> {
     type Item = miette::Result<Token<'de>>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.peeked.is_some() {
+            return self.peeked.take();
+        }
+
         loop {
             // Mostly to allow looping after a comment
             // Skip whitespace
