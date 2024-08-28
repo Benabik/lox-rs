@@ -27,13 +27,30 @@ impl<'de> Literal<'de> {
     }
 }
 
-#[derive(Clone, Display, Debug, From, PartialEq)]
+#[derive(Clone, Debug, From, PartialEq)]
 pub enum LiteralValue<'de> {
     Number(f64),
     String(&'de str),
     Boolean(bool),
-    #[display("nil")]
     Nil,
+}
+
+impl Display for LiteralValue<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LiteralValue::Number(value) => {
+                // Not sure how else to ensure a precision of >= 1 instead of exactly 1.
+                if value.fract() != 0.0 {
+                    write!(f, "{value}")
+                } else {
+                    write!(f, "{value}.0")
+                }
+            }
+            LiteralValue::String(value) => write!(f, "{value}"),
+            LiteralValue::Boolean(value) => write!(f, "{value}"),
+            LiteralValue::Nil => write!(f, "nil"),
+        }
+    }
 }
 
 #[derive(Diagnostic, Debug, Error)]
