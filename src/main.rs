@@ -33,6 +33,8 @@ fn main() -> miette::Result<()> {
             let mut parser = imp::Parser::new(&mut lexer);
 
             println!("{}", parser.expression()?);
+
+            parser.expect_eof()?;
         }
 
         Commands::Tokenize { filename } => {

@@ -113,6 +113,16 @@ impl<'de> Parser<'de> {
         Parser { lexer }
     }
 
+    pub fn expect_eof(&mut self) -> miette::Result<()> {
+        match self.lexer.next() {
+            None => Ok(()),
+            Some(Err(e)) => Err(e).wrap_err("expecting EOF"),
+            Some(Ok(Token { kind, origin, .. })) => {
+                Err(miette::diagnostic!("expecting EOF, found {kind:?}").with_source_loc(origin))
+            }
+        }
+    }
+
     pub fn expression(&mut self) -> miette::Result<Expression<'de>> {
         self.expression_bp(0)
     }
