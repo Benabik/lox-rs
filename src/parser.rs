@@ -129,7 +129,7 @@ impl TryFrom<TokenKind> for BinaryOp {
 
     fn try_from(value: TokenKind) -> Result<Self, Self::Error> {
         match value {
-            TokenKind::EQUAL => Ok(Self::Equal),
+            TokenKind::EQUAL_EQUAL => Ok(Self::Equal),
             TokenKind::BANG_EQUAL => Ok(Self::NotEqual),
             TokenKind::LESS => Ok(Self::Less),
             TokenKind::LESS_EQUAL => Ok(Self::LessEqual),
