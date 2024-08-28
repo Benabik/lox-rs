@@ -32,7 +32,13 @@ fn main() -> miette::Result<()> {
             let mut lexer = imp::Lexer::new(&file_contents);
             let mut parser = imp::Parser::new(&mut lexer);
 
-            println!("{}", parser.expression()?);
+            match parser.expression() {
+                Ok(expr) => println!("{expr}"),
+                Err(e) => {
+                    eprintln!("{e:?}");
+                    std::process::exit(65);
+                }
+            }
 
             parser.expect_eof()?;
         }
