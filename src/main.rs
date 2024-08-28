@@ -17,15 +17,20 @@ enum Commands {
     Tokenize { filename: PathBuf },
 }
 
+fn read_file(filename: &PathBuf) -> miette::Result<String> {
+    fs::read_to_string(filename)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("reading '{}' failed", filename.display()))
+}
+
 fn main() -> miette::Result<()> {
     let args = Args::parse();
     match args.command {
-        Commands::Tokenize { filename } => {
-            let file_contents = fs::read_to_string(&filename)
-                .into_diagnostic()
-                .wrap_err_with(|| format!("reading '{}' failed", filename.display()))?;
 
+        Commands::Tokenize { filename } => {
+            let file_contents = read_file(&filename)?;
             let lexer = imp::Lexer::new(&file_contents);
+
             let mut error = false;
             for token in lexer {
                 match token {
@@ -39,8 +44,8 @@ fn main() -> miette::Result<()> {
             println!("EOF  null");
             if error {
                 std::process::exit(65);
-            }
-            Ok(())
+            };
         }
     }
+    Ok(())
 }
