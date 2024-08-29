@@ -24,17 +24,17 @@ impl Into<miette::SourceSpan> for SourceLoc<'_> {
 
 /// Add source information from a [SourceLoc] to a [MietteDiagnostic]
 pub trait WithSourceLoc {
-    fn with_source_loc(self, loc: SourceLoc) -> Report;
-    fn with_source_loc_label<T: ToString>(self, loc: SourceLoc, label: T) -> Report;
+    fn with_source_loc(self, loc: &SourceLoc) -> Report;
+    fn with_source_loc_label<T: ToString>(self, loc: &SourceLoc, label: T) -> Report;
 }
 
 impl WithSourceLoc for MietteDiagnostic {
-    fn with_source_loc(self, loc: SourceLoc) -> Report {
+    fn with_source_loc(self, loc: &SourceLoc) -> Report {
         Report::from(self.with_label(LabeledSpan::new(None, loc.offset, loc.len)))
             .with_source_code(loc.source.to_string())
     }
 
-    fn with_source_loc_label<T: ToString>(self, loc: SourceLoc, label: T) -> Report {
+    fn with_source_loc_label<T: ToString>(self, loc: &SourceLoc, label: T) -> Report {
         Report::from(self.with_label(LabeledSpan::new(
             Some(label.to_string()),
             loc.offset,

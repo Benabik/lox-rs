@@ -337,7 +337,7 @@ impl<'de> Iterator for Lexer<'de> {
                     // This might be paranoid, as I think anything that gets here is a valid number
                     if text.parse::<f64>().is_err() {
                         return Some(Err(
-                            miette::diagnostic!("malformed number").with_source_loc(origin)
+                            miette::diagnostic!("malformed number").with_source_loc(&origin)
                         ));
                     }
 

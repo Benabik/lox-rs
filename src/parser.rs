@@ -234,7 +234,7 @@ impl<'de> Parser<'de> {
                     Ok(())
                 } else {
                     Err(miette::diagnostic!("expecting {expect:?}, found {kind:?}")
-                        .with_source_loc(origin))
+                        .with_source_loc(&origin))
                 }
             }
         }
@@ -245,7 +245,7 @@ impl<'de> Parser<'de> {
             None => Ok(()),
             Some(Err(e)) => Err(e).wrap_err("expecting EOF"),
             Some(Ok(Token { kind, origin, .. })) => {
-                Err(miette::diagnostic!("expecting EOF, found {kind:?}").with_source_loc(origin))
+                Err(miette::diagnostic!("expecting EOF, found {kind:?}").with_source_loc(&origin))
             }
         }
     }
