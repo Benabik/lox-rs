@@ -14,11 +14,22 @@ pub enum Expression<'de> {
     Grouping(Grouping<'de>),
 }
 
+impl<'de> Expression<'de> {
+    pub fn origin(&self) -> &SourceLoc<'de> {
+        match self {
+            Expression::Literal(Literal { origin, .. }) => origin,
+            Expression::Unary(Unary { origin, ..}) => origin,
+            Expression::Binary(Binary { origin, ..}) => origin,
+            Expression::Grouping(Grouping { origin, ..}) => origin,
+        }
+    }
+}
+
 #[derive(Clone, Display, Debug, PartialEq)]
 #[display("{value}")]
 pub struct Literal<'de> {
-    value: LiteralValue<'de>,
-    origin: SourceLoc<'de>,
+    pub value: LiteralValue<'de>,
+    pub origin: SourceLoc<'de>,
 }
 
 impl<'de> Literal<'de> {
@@ -60,9 +71,9 @@ impl Display for LiteralValue<'_> {
 #[derive(Clone, Display, Debug, PartialEq)]
 #[display("({op} {expr})")]
 pub struct Unary<'de> {
-    op: UnaryOp,
-    expr: Box<Expression<'de>>,
-    origin: SourceLoc<'de>,
+    pub op: UnaryOp,
+    pub expr: Box<Expression<'de>>,
+    pub origin: SourceLoc<'de>,
 }
 
 #[derive(Clone, Display, Debug, PartialEq)]
@@ -94,10 +105,10 @@ impl TryFrom<TokenKind> for UnaryOp {
 #[derive(Clone, Display, Debug, PartialEq)]
 #[display("({op} {lhs} {rhs})")]
 pub struct Binary<'de> {
-    op: BinaryOp,
-    lhs: Box<Expression<'de>>,
-    rhs: Box<Expression<'de>>,
-    origin: SourceLoc<'de>,
+    pub op: BinaryOp,
+    pub lhs: Box<Expression<'de>>,
+    pub rhs: Box<Expression<'de>>,
+    pub origin: SourceLoc<'de>,
 }
 
 #[derive(Clone, Display, Debug, PartialEq)]
@@ -161,8 +172,8 @@ impl BinaryOp {
 #[derive(Clone, Display, Debug, PartialEq)]
 #[display("(group {expr})")]
 pub struct Grouping<'de> {
-    expr: Box<Expression<'de>>,
-    origin: SourceLoc<'de>,
+    pub expr: Box<Expression<'de>>,
+    pub origin: SourceLoc<'de>,
 }
 
 #[derive(Diagnostic, Debug, Error)]

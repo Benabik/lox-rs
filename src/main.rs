@@ -14,6 +14,7 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    Evaluate { filename: PathBuf },
     Parse { filename: PathBuf },
     Tokenize { filename: PathBuf },
 }
@@ -27,6 +28,22 @@ fn read_file(filename: &PathBuf) -> miette::Result<String> {
 fn main() -> miette::Result<()> {
     let args = Args::parse();
     match args.command {
+        Commands::Evaluate { filename } => {
+            let file_contents = read_file(&filename)?;
+            let mut lexer = imp::Lexer::new(&file_contents);
+            let mut parser = imp::Parser::new(&mut lexer);
+
+            match imp::evaluate(parser.expression()?) {
+                Ok(val) => println!("{val}"),
+                Err(e) => {
+                    eprintln!("{e:?}");
+                    std::process::exit(65);
+                }
+            }
+
+            parser.expect_eof()?;
+        }
+
         Commands::Parse { filename } => {
             let file_contents = read_file(&filename)?;
             let mut lexer = imp::Lexer::new(&file_contents);

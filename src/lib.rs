@@ -4,6 +4,9 @@ pub use lex::Lexer;
 pub mod parser;
 pub use parser::Parser;
 
+pub mod evaluation;
+pub use evaluation::evaluate;
+
 use miette::{LabeledSpan, MietteDiagnostic, Report};
 
 /// Holds a reference to the source code with position information
