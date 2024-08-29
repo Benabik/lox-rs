@@ -25,6 +25,12 @@ impl From<SourceLoc<'_>> for miette::SourceSpan {
     }
 }
 
+impl From<&SourceLoc<'_>> for miette::SourceSpan {
+    fn from(value: &SourceLoc<'_>) -> Self {
+        miette::SourceSpan::new(value.offset.into(), value.len)
+    }
+}
+
 /// Add source information from a [SourceLoc] to a [MietteDiagnostic]
 pub trait WithSourceLoc {
     fn with_source_loc(self, loc: &SourceLoc) -> Report;
