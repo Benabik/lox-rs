@@ -26,6 +26,7 @@ impl From<LiteralValue<'_>> for Value {
 pub fn evaluate(expr: Expression) -> miette::Result<Value> {
     let val = match expr {
         Expression::Literal(parser::Literal { value, .. }) => value.into(),
+        Expression::Grouping(parser::Grouping { expr, .. }) => return evaluate(*expr),
         _ => return Err(miette::diagnostic! {
             "Expression type NYI"
         }
