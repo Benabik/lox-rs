@@ -19,9 +19,9 @@ pub struct SourceLoc<'de> {
     pub len: usize,
 }
 
-impl Into<miette::SourceSpan> for SourceLoc<'_> {
-    fn into(self) -> miette::SourceSpan {
-        miette::SourceSpan::new(self.offset.into(), self.len)
+impl From<SourceLoc<'_>> for miette::SourceSpan {
+    fn from(value: SourceLoc<'_>) -> Self {
+        miette::SourceSpan::new(value.offset.into(), value.len)
     }
 }
 
