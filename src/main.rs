@@ -68,6 +68,7 @@ fn main() -> miette::Result<()> {
     };
 
     if matches!(args.command, Commands::Parse { .. }) {
+        println!("{expr}");
         std::process::exit(0);
     }
 
