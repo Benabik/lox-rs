@@ -1,5 +1,5 @@
-use crate::{parser, WithSourceLoc};
 use crate::parser::{Expression, LiteralValue};
+use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
 use miette::{Diagnostic, SourceSpan};
 use thiserror::Error;
@@ -63,12 +63,19 @@ pub struct TypeError {
 
 impl TypeError {
     pub fn new(expected: &'static str, value: Value) -> Self {
-        TypeError { expected, value, span: None, src: None }
+        TypeError {
+            expected,
+            value,
+            span: None,
+            src: None,
+        }
     }
 }
 
 impl WithSourceLoc for TypeError {
-    fn with_source_loc(mut self, loc: &crate::SourceLoc) -> miette::Error {
+    type Wrapped = miette::Error;
+
+    fn with_source_loc(mut self, loc: &crate::SourceLoc) -> Self::Wrapped {
         self.src = Some(loc.source.to_string());
         self.span = Some(loc.into());
         self.into()

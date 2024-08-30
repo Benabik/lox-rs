@@ -33,12 +33,23 @@ impl From<&SourceLoc<'_>> for miette::SourceSpan {
 
 /// Add source information from a [SourceLoc] to a [MietteDiagnostic]
 pub trait WithSourceLoc {
-    fn with_source_loc(self, loc: &SourceLoc) -> Report;
+    type Wrapped;
+    fn with_source_loc(self, loc: &SourceLoc) -> Self::Wrapped;
 }
 
 impl WithSourceLoc for MietteDiagnostic {
+    type Wrapped = Report;
+
     fn with_source_loc(self, loc: &SourceLoc) -> Report {
         Report::from(self.with_label(LabeledSpan::new(None, loc.offset, loc.len)))
             .with_source_code(loc.source.to_string())
+    }
+}
+
+impl<T, E: WithSourceLoc> WithSourceLoc for Result<T, E> {
+    type Wrapped = Result<T, E::Wrapped>;
+
+    fn with_source_loc(self, loc: &SourceLoc) -> Self::Wrapped {
+        self.map_err(|err| err.with_source_loc(loc))
     }
 }
