@@ -48,6 +48,28 @@ impl TryFrom<Value> for f64 {
     }
 }
 
+impl TryFrom<Value> for String {
+    type Error = TypeError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::String(value) => Ok(value),
+            _ => Err(TypeError::new("string", value)),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for &'a str {
+    type Error = TypeError;
+
+    fn try_from(value: &'a Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::String(value) => Ok(value),
+            _ => Err(TypeError::new("string", value.clone())),
+        }
+    }
+}
+
 #[derive(Diagnostic, Debug, Error)]
 #[error("Type Error, expected {expected}, got {value}")]
 pub struct TypeError {
@@ -83,23 +105,80 @@ impl WithSourceLoc for TypeError {
 }
 
 pub fn evaluate(expr: Expression) -> miette::Result<Value> {
+    let to_float = |val: Value, origin: &SourceLoc| f64::try_from(val).with_source_loc(origin);
+    let to_string = |val: Value, origin: &SourceLoc| String::try_from(val).with_source_loc(origin);
+
     let val = match expr {
         Expression::Literal(parser::Literal { value, .. }) => value.into(),
         Expression::Grouping(parser::Grouping { expr, .. }) => return evaluate(*expr),
         Expression::Unary(parser::Unary { op, expr, origin }) => {
             let value = evaluate(*expr)?;
             match op {
-                parser::UnaryOp::Negate => {
-                    let value: f64 = value.try_into().map_err(|err: TypeError| err.with_source_loc(&origin))?;
-                    (-value).into()
-                }
+                parser::UnaryOp::Negate => (-to_float(value, &origin)?).into(),
                 parser::UnaryOp::Not => (!bool::from(value)).into(),
             }
         }
-        _ => return Err(miette::diagnostic! {
-            "Expression type NYI"
+        Expression::Binary(parser::Binary {
+            op,
+            lhs,
+            rhs,
+            origin,
+        }) => {
+            let lhs = evaluate(*lhs)?;
+            let rhs = evaluate(*rhs)?;
+
+            let binary_float = |lhs, rhs, f: fn(f64, f64) -> f64| {
+                let lhs = to_float(lhs, &origin)?;
+                let rhs = to_float(rhs, &origin)?;
+                Ok::<Value, miette::Report>(f(lhs, rhs).into())
+            };
+
+            use parser::BinaryOp::*;
+            match op {
+                Equal => Value::from(lhs == rhs),
+                NotEqual => Value::from(lhs != rhs),
+                Less | LessEqual | Greater | GreaterEqual => match lhs {
+                    Value::Number(lhs) => {
+                        let rhs = to_float(rhs, &origin)?;
+                        match op {
+                            Less => lhs < rhs,
+                            LessEqual => lhs <= rhs,
+                            Greater => lhs > rhs,
+                            GreaterEqual => lhs >= rhs,
+                            _ => unreachable!("by outer match"),
+                        }
+                        .into()
+                    }
+                    Value::String(lhs) => {
+                        let rhs = to_string(rhs, &origin)?;
+                        match op {
+                            Less => lhs < rhs,
+                            LessEqual => lhs <= rhs,
+                            Greater => lhs > rhs,
+                            GreaterEqual => lhs >= rhs,
+                            _ => unreachable!("by outer match"),
+                        }
+                        .into()
+                    }
+                    _ => {
+                        return Err(TypeError::new("number or string", lhs).with_source_loc(&origin))
+                    }
+                },
+                Plus => match lhs {
+                    Value::Number(lhs) => (lhs + to_float(rhs, &origin)?).into(),
+                    Value::String(mut lhs) => {
+                        lhs += &to_string(rhs, &origin)?;
+                        lhs.into()
+                    }
+                    _ => {
+                        return Err(TypeError::new("number or string", lhs).with_source_loc(&origin))
+                    }
+                },
+                Minus => binary_float(lhs, rhs, |x, y| x - y)?,
+                Multiply => binary_float(lhs, rhs, |x, y| x * y)?,
+                Divide => binary_float(lhs, rhs, |x, y| x / y)?,
+            }
         }
-        .with_source_loc(expr.origin())),
     };
 
     Ok(val)
