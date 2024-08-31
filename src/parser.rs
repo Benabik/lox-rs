@@ -6,6 +6,43 @@ use derive_more::{Display, From};
 use miette::{Context, Diagnostic, Report, SourceSpan};
 use thiserror::Error;
 
+#[derive(Clone, Debug, From, PartialEq)]
+pub struct Program<'de>(pub Vec<Statement<'de>>);
+
+impl Display for Program<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(")?;
+        let mut iter = self.0.iter();
+        if let Some(fst) = iter.next() {
+            write!(f, "{fst}")?;
+            for i in iter {
+                write!(f, " {i}")?;
+            }
+        }
+        write!(f, ")")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Statement<'de> {
+    Expression(Expression<'de>),
+    Print(Expression<'de>),
+}
+
+impl Display for Statement<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(")?;
+        match self {
+            Statement::Expression(e) => e.fmt(f)?,
+            Statement::Print(e) => {
+                write!(f, "print ")?;
+                e.fmt(f)?;
+            }
+        }
+        write!(f, ")")
+    }
+}
+
 #[derive(Clone, Display, Debug, From, PartialEq)]
 pub enum Expression<'de> {
     Literal(Literal<'de>),
@@ -18,9 +55,9 @@ impl<'de> Expression<'de> {
     pub fn origin(&self) -> &SourceLoc<'de> {
         match self {
             Expression::Literal(Literal { origin, .. }) => origin,
-            Expression::Unary(Unary { origin, ..}) => origin,
-            Expression::Binary(Binary { origin, ..}) => origin,
-            Expression::Grouping(Grouping { origin, ..}) => origin,
+            Expression::Unary(Unary { origin, .. }) => origin,
+            Expression::Binary(Binary { origin, .. }) => origin,
+            Expression::Grouping(Grouping { origin, .. }) => origin,
         }
     }
 }
@@ -258,6 +295,32 @@ impl<'de> Parser<'de> {
             Some(Ok(Token { kind, origin, .. })) => {
                 Err(miette::diagnostic!("expecting EOF, found {kind:?}").with_source_loc(&origin))
             }
+        }
+    }
+
+    pub fn program(&mut self) -> miette::Result<Program<'de>> {
+        let mut statements = Vec::new();
+        while self.lexer.peek().is_some() {
+            statements.push(self.statement().wrap_err("in program")?);
+            self.expect(TokenKind::SEMICOLON)?;
+        }
+        Ok(Program(statements))
+    }
+
+    pub fn statement(&mut self) -> miette::Result<Statement<'de>> {
+        if let Some(Ok(Token {
+            kind: TokenKind::PRINT,
+            ..
+        })) = self.lexer.peek()
+        {
+            self.lexer.next(); // Discard PRINT
+            Ok(Statement::Print(
+                self.expression().wrap_err("in print statement")?,
+            ))
+        } else {
+            Ok(Statement::Expression(
+                self.expression().wrap_err("in expression statement")?,
+            ))
         }
     }
 

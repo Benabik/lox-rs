@@ -1,4 +1,4 @@
-use crate::parser::{Expression, LiteralValue};
+use crate::parser::{Expression, LiteralValue, Program};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
 use miette::{Diagnostic, SourceSpan};
@@ -104,15 +104,31 @@ impl WithSourceLoc for TypeError {
     }
 }
 
-pub fn evaluate(expr: Expression) -> miette::Result<Value> {
+pub fn evaluate(prog: Program) -> miette::Result<()> {
+    for s in prog.0 {
+        use parser::Statement::*;
+        match s {
+            Expression(e) => {
+                eval_expression(e)?;
+            }
+            Print(e) => {
+                let val = eval_expression(e)?;
+                println!("{val}");
+            }
+        };
+    }
+    Ok(())
+}
+
+pub fn eval_expression(expr: Expression) -> miette::Result<Value> {
     let to_float = |val: Value, origin: &SourceLoc| f64::try_from(val).with_source_loc(origin);
     let to_string = |val: Value, origin: &SourceLoc| String::try_from(val).with_source_loc(origin);
 
     let val = match expr {
         Expression::Literal(parser::Literal { value, .. }) => value.into(),
-        Expression::Grouping(parser::Grouping { expr, .. }) => return evaluate(*expr),
+        Expression::Grouping(parser::Grouping { expr, .. }) => return eval_expression(*expr),
         Expression::Unary(parser::Unary { op, expr, origin }) => {
-            let value = evaluate(*expr)?;
+            let value = eval_expression(*expr)?;
             match op {
                 parser::UnaryOp::Negate => (-to_float(value, &origin)?).into(),
                 parser::UnaryOp::Not => (!bool::from(value)).into(),
@@ -124,8 +140,8 @@ pub fn evaluate(expr: Expression) -> miette::Result<Value> {
             rhs,
             origin,
         }) => {
-            let lhs = evaluate(*lhs)?;
-            let rhs = evaluate(*rhs)?;
+            let lhs = eval_expression(*lhs)?;
+            let rhs = eval_expression(*rhs)?;
 
             let binary_float = |lhs, rhs, f: fn(f64, f64) -> f64| {
                 let lhs = to_float(lhs, &origin)?;

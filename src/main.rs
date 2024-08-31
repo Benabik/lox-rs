@@ -17,7 +17,9 @@ impl Args {
         match &self.command {
             Commands::Evaluate { filename } => filename,
             Commands::Parse { filename } => filename,
+            Commands::Program { filename } => filename,
             Commands::Tokenize { filename } => filename,
+            Commands::Run { filename } => filename,
         }
     }
 }
@@ -26,7 +28,9 @@ impl Args {
 enum Commands {
     Evaluate { filename: PathBuf },
     Parse { filename: PathBuf },
+    Program { filename: PathBuf },
     Tokenize { filename: PathBuf },
+    Run { filename: PathBuf },
 }
 
 fn read_file(filename: &PathBuf) -> miette::Result<String> {
@@ -59,34 +63,53 @@ fn main() -> miette::Result<()> {
     }
 
     let mut parser = imp::Parser::new(&mut lexer);
-    let expr = match parser.expression() {
-        Ok(expr) => expr,
-        Err(e) => {
-            eprintln!("{e:?}");
-            std::process::exit(65);
+
+    match args.command {
+        Commands::Tokenize { .. } => unreachable!("exited earlier"),
+        Commands::Evaluate { .. } | Commands::Parse { .. } => {
+            let expr = match parser.expression() {
+                Ok(expr) => expr,
+                Err(e) => {
+                    eprintln!("{e:?}");
+                    std::process::exit(65);
+                }
+            };
+
+            if matches!(args.command, Commands::Parse { .. }) {
+                println!("{expr}");
+                std::process::exit(0);
+            }
+
+            match imp::evaluation::eval_expression(expr) {
+                Ok(val) => println!("{val}"),
+                Err(e) => {
+                    eprintln!("{e:?}");
+                    std::process::exit(70);
+                }
+            }
         }
-    };
+        Commands::Program { .. } | Commands::Run { .. } => {
+            let prog = match parser.program() {
+                Ok(prog) => prog,
+                Err(e) => {
+                    eprintln!("{e:?}");
+                    std::process::exit(65);
+                }
+            };
 
-    if matches!(args.command, Commands::Parse { .. }) {
-        println!("{expr}");
-        std::process::exit(0);
-    }
+            if matches!(args.command, Commands::Program { .. }) {
+                println!("{prog}");
+                std::process::exit(0);
+            }
 
-    match imp::evaluate(expr) {
-        Ok(val) => println!("{val}"),
-        Err(e) => {
-            eprintln!("{e:?}");
-            std::process::exit(70);
+            if let Err(e) = imp::evaluation::evaluate(prog) {
+                eprintln!("{e:?}");
+                std::process::exit(70);
+            }
         }
     }
 
     parser.expect_eof()?;
-
-    /*
-    if matches!(args.command, Commands::Evaluate { .. }) {
-        std::process::exit(0);
-    }
-    */
 
     Ok(())
 }
