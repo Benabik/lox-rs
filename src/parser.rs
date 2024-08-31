@@ -226,7 +226,7 @@ pub struct UnexpectedEOFError {
 impl UnexpectedEOFError {
     fn new<T: ToString>(source: T) -> Report {
         let src = source.to_string();
-        let span = SourceSpan::new(src.len().into(), 0);
+        let span = SourceSpan::new((src.len() - 1).into(), 1);
         Self { src, span }.into()
     }
 }
