@@ -45,33 +45,48 @@ impl Display for Statement<'_> {
 
 #[derive(Clone, Display, Debug, From, PartialEq)]
 pub enum Expression<'de> {
-    Literal(Literal<'de>),
-    Unary(Unary<'de>),
-    Binary(Binary<'de>),
-    Grouping(Grouping<'de>),
+    #[display("{value}")]
+    Literal {
+        value: LiteralValue<'de>,
+        origin: SourceLoc<'de>,
+    },
+
+    #[display("({op} {expr})")]
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expression<'de>>,
+        origin: SourceLoc<'de>,
+    },
+
+    #[display("({op} {lhs} {rhs})")]
+    Binary {
+        op: BinaryOp,
+        lhs: Box<Expression<'de>>,
+        rhs: Box<Expression<'de>>,
+        origin: SourceLoc<'de>,
+    },
+
+    #[display("(group {expr})")]
+    Grouping {
+        expr: Box<Expression<'de>>,
+        origin: SourceLoc<'de>,
+    },
 }
 
 impl<'de> Expression<'de> {
     pub fn origin(&self) -> &SourceLoc<'de> {
         match self {
-            Expression::Literal(Literal { origin, .. }) => origin,
-            Expression::Unary(Unary { origin, .. }) => origin,
-            Expression::Binary(Binary { origin, .. }) => origin,
-            Expression::Grouping(Grouping { origin, .. }) => origin,
+            Expression::Literal { origin, .. } => origin,
+            Expression::Unary { origin, .. } => origin,
+            Expression::Binary { origin, .. } => origin,
+            Expression::Grouping { origin, .. } => origin,
         }
     }
 }
 
-#[derive(Clone, Display, Debug, PartialEq)]
-#[display("{value}")]
-pub struct Literal<'de> {
-    pub value: LiteralValue<'de>,
-    pub origin: SourceLoc<'de>,
-}
-
-impl<'de> Literal<'de> {
-    pub fn new<T: Into<LiteralValue<'de>>>(value: T, origin: SourceLoc<'de>) -> Self {
-        Literal {
+impl<'de> Expression<'de> {
+    pub fn literal<T: Into<LiteralValue<'de>>>(value: T, origin: SourceLoc<'de>) -> Self {
+        Expression::Literal {
             value: value.into(),
             origin,
         }
@@ -106,14 +121,6 @@ impl Display for LiteralValue<'_> {
 }
 
 #[derive(Clone, Display, Debug, PartialEq)]
-#[display("({op} {expr})")]
-pub struct Unary<'de> {
-    pub op: UnaryOp,
-    pub expr: Box<Expression<'de>>,
-    pub origin: SourceLoc<'de>,
-}
-
-#[derive(Clone, Display, Debug, PartialEq)]
 pub enum UnaryOp {
     #[display("-")]
     Negate,
@@ -137,15 +144,6 @@ impl TryFrom<TokenKind> for UnaryOp {
             _ => Err(()),
         }
     }
-}
-
-#[derive(Clone, Display, Debug, PartialEq)]
-#[display("({op} {lhs} {rhs})")]
-pub struct Binary<'de> {
-    pub op: BinaryOp,
-    pub lhs: Box<Expression<'de>>,
-    pub rhs: Box<Expression<'de>>,
-    pub origin: SourceLoc<'de>,
 }
 
 #[derive(Clone, Display, Debug, PartialEq)]
@@ -204,13 +202,6 @@ impl BinaryOp {
             // UnaryOp goes here
         }
     }
-}
-
-#[derive(Clone, Display, Debug, PartialEq)]
-#[display("(group {expr})")]
-pub struct Grouping<'de> {
-    pub expr: Box<Expression<'de>>,
-    pub origin: SourceLoc<'de>,
 }
 
 #[derive(Diagnostic, Debug, Error)]
@@ -341,30 +332,29 @@ impl<'de> Parser<'de> {
         let mut lhs = match kind {
             TokenKind::NUMBER => {
                 let value: f64 = text.parse().expect("valid from parsing");
-                Literal::new(value, origin).into()
+                Expression::literal(value, origin)
             }
-            TokenKind::STRING => Literal::new(text.trim_matches('"'), origin).into(),
-            TokenKind::TRUE => Literal::new(true, origin).into(),
-            TokenKind::FALSE => Literal::new(false, origin).into(),
-            TokenKind::NIL => Literal::new(LiteralValue::Nil, origin).into(),
+            TokenKind::STRING => Expression::literal(text.trim_matches('"'), origin),
+            TokenKind::TRUE => Expression::literal(true, origin),
+            TokenKind::FALSE => Expression::literal(false, origin),
+            TokenKind::NIL => Expression::literal(LiteralValue::Nil, origin),
             TokenKind::LEFT_PAREN => {
                 let expr = self.expression().wrap_err("in parentheses")?;
                 self.expect(TokenKind::RIGHT_PAREN)?;
-                Grouping {
+                Expression::Grouping {
                     expr: Box::new(expr),
                     origin,
                 }
-                .into()
             }
+            TokenKind::IDENTIFIER => todo!(),
             _ => {
                 if let Ok(op) = UnaryOp::try_from(kind) {
                     let expr = self.expression_bp(op.prefix_binding_power())?;
-                    Unary {
+                    Expression::Unary {
                         op,
                         expr: Box::new(expr),
                         origin,
                     }
-                    .into()
                 } else {
                     return UnexpectedTokenError::new(kind, origin)
                         .err()
@@ -396,13 +386,12 @@ impl<'de> Parser<'de> {
                             self.lexer.next().expect("peeked Some").expect("peeked Ok");
 
                         let rhs = self.expression_bp(r_bp)?;
-                        lhs = Binary {
+                        lhs = Expression::Binary {
                             op,
                             lhs: Box::new(lhs),
                             rhs: Box::new(rhs),
                             origin,
-                        }
-                        .into();
+                        };
                         continue;
                     }
 

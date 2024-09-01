@@ -125,21 +125,21 @@ pub fn eval_expression(expr: Expression) -> miette::Result<Value> {
     let to_string = |val: Value, origin: &SourceLoc| String::try_from(val).with_source_loc(origin);
 
     let val = match expr {
-        Expression::Literal(parser::Literal { value, .. }) => value.into(),
-        Expression::Grouping(parser::Grouping { expr, .. }) => return eval_expression(*expr),
-        Expression::Unary(parser::Unary { op, expr, origin }) => {
+        Expression::Literal { value, .. } => value.into(),
+        Expression::Grouping { expr, .. } => return eval_expression(*expr),
+        Expression::Unary { op, expr, origin } => {
             let value = eval_expression(*expr)?;
             match op {
                 parser::UnaryOp::Negate => (-to_float(value, &origin)?).into(),
                 parser::UnaryOp::Not => (!bool::from(value)).into(),
             }
         }
-        Expression::Binary(parser::Binary {
+        Expression::Binary {
             op,
             lhs,
             rhs,
             origin,
-        }) => {
+        } => {
             let lhs = eval_expression(*lhs)?;
             let rhs = eval_expression(*rhs)?;
 
