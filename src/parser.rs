@@ -158,7 +158,7 @@ pub enum UnaryOp {
 
 impl UnaryOp {
     pub fn prefix_binding_power(&self) -> u8 {
-        9 // One more than BinaryOp::Divide
+        11 // One more than BinaryOp::Divide
     }
 }
 
@@ -196,6 +196,8 @@ pub enum BinaryOp {
     Multiply,
     #[display("/")]
     Divide,
+    #[display("=")]
+    Assign,
 }
 
 impl TryFrom<TokenKind> for BinaryOp {
@@ -213,6 +215,7 @@ impl TryFrom<TokenKind> for BinaryOp {
             TokenKind::MINUS => Ok(Self::Minus),
             TokenKind::STAR => Ok(Self::Multiply),
             TokenKind::SLASH => Ok(Self::Divide),
+            TokenKind::EQUAL => Ok(Self::Assign),
             _ => Err(()),
         }
     }
@@ -221,12 +224,13 @@ impl TryFrom<TokenKind> for BinaryOp {
 impl BinaryOp {
     fn binding_power(&self) -> (u8, u8) {
         match self {
-            BinaryOp::Equal | BinaryOp::NotEqual => (1, 2),
+            BinaryOp::Assign => (2, 1),
+            BinaryOp::Equal | BinaryOp::NotEqual => (3, 4),
             BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => {
-                (3, 4)
+                (5, 6)
             }
-            BinaryOp::Plus | BinaryOp::Minus => (5, 6),
-            BinaryOp::Multiply | BinaryOp::Divide => (7, 8),
+            BinaryOp::Plus | BinaryOp::Minus => (7, 8),
+            BinaryOp::Multiply | BinaryOp::Divide => (9, 10),
             // UnaryOp goes here
         }
     }
