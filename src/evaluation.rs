@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::parser::{Expression, LiteralValue, Program};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
@@ -104,22 +106,60 @@ impl WithSourceLoc for TypeError {
     }
 }
 
+#[derive(Diagnostic, Debug, Error)]
+#[error("Undefined variable '{name}'.")]
+pub struct UndefinedVariableError {
+    name: String,
+
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl UndefinedVariableError {
+    fn new<T: ToString>(name: T, origin: &SourceLoc) -> Self {
+        Self {
+            name: name.to_string(),
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
-pub struct Evaluator {}
+pub struct Evaluator {
+    environment: HashMap<String, Value>,
+}
 
 impl Evaluator {
     pub fn run(&mut self, prog: Program) -> miette::Result<()> {
-        for s in prog.0 {
-            use parser::Statement::*;
-            match s {
-                Expression(e) => {
-                    self.expression(e)?;
+        for d in prog.0 {
+            use parser::Declaration::*;
+            match d {
+                Declaration(name, expr) => {
+                    let val = if let Some(expr) = expr {
+                        self.expression(expr)?
+                    } else {
+                        Value::Nil
+                    };
+                    self.environment.insert(name.to_string(), val);
                 }
-                Print(e) => {
-                    let val = self.expression(e)?;
-                    println!("{val}");
+
+                Statement(s) => {
+                    use parser::Statement::*;
+                    match s {
+                        Expression(e) => {
+                            self.expression(e)?;
+                        }
+                        Print(e) => {
+                            let val = self.expression(e)?;
+                            println!("{val}");
+                        }
+                    };
                 }
-            };
+            }
         }
         Ok(())
     }
@@ -201,6 +241,12 @@ impl Evaluator {
                         Minus => binary_float(lhs, rhs, |x, y| x - y)?,
                         Multiply => binary_float(lhs, rhs, |x, y| x * y)?,
                         Divide => binary_float(lhs, rhs, |x, y| x / y)?,
+                    }
+                }
+                Expression::Variable { name, origin } => {
+                    match self.environment.get(name) {
+                        Some(v) => v.clone(),
+                        None => return Err(UndefinedVariableError::new(name, &origin).into()),
                     }
                 }
             };

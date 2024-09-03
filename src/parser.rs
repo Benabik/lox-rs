@@ -7,7 +7,7 @@ use miette::{Context, Diagnostic, Report, SourceSpan};
 use thiserror::Error;
 
 #[derive(Clone, Debug, From, PartialEq)]
-pub struct Program<'de>(pub Vec<Statement<'de>>);
+pub struct Program<'de>(pub Vec<Declaration<'de>>);
 
 impl Display for Program<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -20,6 +20,27 @@ impl Display for Program<'_> {
             }
         }
         write!(f, ")")
+    }
+}
+
+#[derive(Clone, Debug, From, PartialEq)]
+pub enum Declaration<'de> {
+    Declaration(&'de str, Option<Expression<'de>>),
+    Statement(Statement<'de>),
+}
+
+impl Display for Declaration<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Declaration::Declaration(name, expr) => {
+                write!(f, "(var {}", name)?;
+                if let Some(expr) = expr {
+                    write!(f, " {expr}")?;
+                }
+                write!(f, ")")
+            }
+            Declaration::Statement(expr) => expr.fmt(f),
+        }
     }
 }
 
@@ -71,6 +92,12 @@ pub enum Expression<'de> {
         expr: Box<Expression<'de>>,
         origin: SourceLoc<'de>,
     },
+
+    #[display("{name}")]
+    Variable {
+        name: &'de str,
+        origin: SourceLoc<'de>,
+    },
 }
 
 impl<'de> Expression<'de> {
@@ -80,6 +107,7 @@ impl<'de> Expression<'de> {
             Expression::Unary { origin, .. } => origin,
             Expression::Binary { origin, .. } => origin,
             Expression::Grouping { origin, .. } => origin,
+            Expression::Variable { origin, .. } => origin,
         }
     }
 }
@@ -263,17 +291,26 @@ impl<'de> Parser<'de> {
         Parser { lexer }
     }
 
-    pub fn expect(&mut self, expect: TokenKind) -> miette::Result<()> {
+    pub fn peek_for(&mut self, wanted: TokenKind) -> bool {
+        match self.lexer.peek() {
+            Some(Ok(Token { kind, .. })) if kind == &wanted => true,
+            _ => false,
+        }
+    }
+
+    pub fn expect(&mut self, expect: TokenKind) -> miette::Result<Token<'de>> {
         let expecting = || format!("expecting {expect:?}");
         match self.lexer.next() {
             None => Err(UnexpectedEOFError::new(self.lexer.source())).wrap_err_with(expecting),
             Some(Err(e)) => Err(e).wrap_err_with(expecting),
-            Some(Ok(Token { kind, origin, .. })) => {
-                if kind == expect {
-                    Ok(())
+            Some(Ok(token)) => {
+                if token.kind == expect {
+                    Ok(token)
                 } else {
-                    Err(miette::diagnostic!("expecting {expect:?}, found {kind:?}")
-                        .with_source_loc(&origin))
+                    Err(
+                        miette::diagnostic!("expecting {expect:?}, found {:?}", token.kind)
+                            .with_source_loc(&token.origin),
+                    )
                 }
             }
         }
@@ -292,27 +329,39 @@ impl<'de> Parser<'de> {
     pub fn program(&mut self) -> miette::Result<Program<'de>> {
         let mut statements = Vec::new();
         while self.lexer.peek().is_some() {
-            statements.push(self.statement().wrap_err("in program")?);
-            self.expect(TokenKind::SEMICOLON)?;
+            statements.push(self.declaration().wrap_err("in program")?);
         }
-        Ok(Program(statements))
+        Ok(statements.into())
+    }
+
+    pub fn declaration(&mut self) -> miette::Result<Declaration<'de>> {
+        if self.peek_for(TokenKind::VAR) {
+            self.lexer.next(); // Discard VAR
+            let var = self.expect(TokenKind::IDENTIFIER)?;
+            let expr = if self.peek_for(TokenKind::EQUAL) {
+                self.lexer.next(); // Discard EQUAL
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            self.expect(TokenKind::SEMICOLON)?;
+            Ok(Declaration::Declaration(var.text, expr))
+        } else {
+            Ok(Declaration::Statement(
+                self.statement().wrap_err("in declaration")?,
+            ))
+        }
     }
 
     pub fn statement(&mut self) -> miette::Result<Statement<'de>> {
-        if let Some(Ok(Token {
-            kind: TokenKind::PRINT,
-            ..
-        })) = self.lexer.peek()
-        {
+        let statement = if self.peek_for(TokenKind::PRINT) {
             self.lexer.next(); // Discard PRINT
-            Ok(Statement::Print(
-                self.expression().wrap_err("in print statement")?,
-            ))
+            Statement::Print(self.expression().wrap_err("in print statement")?)
         } else {
-            Ok(Statement::Expression(
-                self.expression().wrap_err("in expression statement")?,
-            ))
-        }
+            Statement::Expression(self.expression().wrap_err("in expression statement")?)
+        };
+        self.expect(TokenKind::SEMICOLON)?;
+        Ok(statement)
     }
 
     pub fn expression(&mut self) -> miette::Result<Expression<'de>> {
@@ -346,7 +395,7 @@ impl<'de> Parser<'de> {
                     origin,
                 }
             }
-            TokenKind::IDENTIFIER => todo!(),
+            TokenKind::IDENTIFIER => Expression::Variable { name: text, origin },
             _ => {
                 if let Ok(op) = UnaryOp::try_from(kind) {
                     let expr = self.expression_bp(op.prefix_binding_power())?;
