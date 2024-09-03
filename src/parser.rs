@@ -97,6 +97,13 @@ pub enum Expression<'de> {
         name: &'de str,
         origin: SourceLoc<'de>,
     },
+
+    #[display("(assign {name} {expr})")]
+    Assign {
+        name: &'de str,
+        expr: Box<Expression<'de>>,
+        origin: SourceLoc<'de>,
+    },
 }
 
 impl<'de> Expression<'de> {
@@ -107,6 +114,7 @@ impl<'de> Expression<'de> {
             Expression::Binary { origin, .. } => origin,
             Expression::Grouping { origin, .. } => origin,
             Expression::Variable { origin, .. } => origin,
+            Expression::Assign { origin, .. } => origin,
         }
     }
 }
@@ -195,8 +203,6 @@ pub enum BinaryOp {
     Multiply,
     #[display("/")]
     Divide,
-    #[display("=")]
-    Assign,
 }
 
 impl TryFrom<TokenKind> for BinaryOp {
@@ -214,7 +220,6 @@ impl TryFrom<TokenKind> for BinaryOp {
             TokenKind::MINUS => Ok(Self::Minus),
             TokenKind::STAR => Ok(Self::Multiply),
             TokenKind::SLASH => Ok(Self::Divide),
-            TokenKind::EQUAL => Ok(Self::Assign),
             _ => Err(()),
         }
     }
@@ -223,7 +228,7 @@ impl TryFrom<TokenKind> for BinaryOp {
 impl BinaryOp {
     fn binding_power(&self) -> (u8, u8) {
         match self {
-            BinaryOp::Assign => (2, 1),
+            // Expression::Assign is 2, 1
             BinaryOp::Equal | BinaryOp::NotEqual => (3, 4),
             BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => {
                 (5, 6)
@@ -282,6 +287,25 @@ impl UnexpectedTokenError {
 impl From<Token<'_>> for UnexpectedTokenError {
     fn from(token: Token<'_>) -> Self {
         Self::new(token.kind, token.origin)
+    }
+}
+
+#[derive(Diagnostic, Debug, Error)]
+#[error("Invalid assignment target.")]
+pub struct InvalidAssignmentError {
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl InvalidAssignmentError {
+    fn new(origin: &SourceLoc) -> Self {
+        Self {
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
     }
 }
 
@@ -428,6 +452,30 @@ impl<'de> Parser<'de> {
                 }
                 Some(Ok(token)) => {
                     // TODO: Check postfix
+
+                    if token.kind == TokenKind::EQUAL {
+                        // Assignment binding_power
+                        let (l_bp, r_bp) = (2, 1);
+                        if l_bp < min_bp {
+                            break;
+                        }
+
+                        let Token { origin, .. } =
+                            self.lexer.next().expect("peeked Some").expect("peeked Ok");
+
+                        let Expression::Variable { name, .. } = lhs else {
+                            return Err(InvalidAssignmentError::new(&origin).into());
+                        };
+
+                        let expr = self.expression_bp(r_bp)?;
+                        lhs = Expression::Assign {
+                            name,
+                            expr: Box::new(expr),
+                            origin,
+                        };
+
+                        continue;
+                    }
 
                     if let Ok(op) = BinaryOp::try_from(token.kind) {
                         let (l_bp, r_bp) = op.binding_power();

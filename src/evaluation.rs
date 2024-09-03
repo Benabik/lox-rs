@@ -128,25 +128,6 @@ impl UndefinedVariableError {
     }
 }
 
-#[derive(Diagnostic, Debug, Error)]
-#[error("Invalid assignment target.")]
-pub struct InvalidAssignmentError {
-    #[label("here")]
-    span: SourceSpan,
-
-    #[source_code]
-    src: String,
-}
-
-impl InvalidAssignmentError {
-    fn new(origin: &SourceLoc) -> Self {
-        Self {
-            span: origin.into(),
-            src: origin.source.to_string(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Evaluator {
     environment: HashMap<String, Value>,
@@ -199,23 +180,13 @@ impl Evaluator {
                         parser::UnaryOp::Not => (!bool::from(value)).into(),
                     }
                 }
-                // Maybe: match binary with assign op
-                Expression::Binary {
-                    op: parser::BinaryOp::Assign,
-                    lhs,
-                    rhs,
-                    origin,
-                } => {
-                    let invalid = || Err(InvalidAssignmentError::new(&origin).into());
-                    let Expression::Variable { name, .. } = *lhs else {
-                        return invalid();
-                    };
-                    let rhs = self.expression(*rhs)?;
+                Expression::Assign { name, expr, origin } => {
+                    let value = self.expression(*expr)?;
                     match self.environment.get_mut(name) {
-                        Some(var) => *var = rhs.clone(),
-                        None => return invalid(),
+                        Some(var) => *var = value.clone(),
+                        None => return Err(UndefinedVariableError::new(name, &origin).into()),
                     }
-                    rhs
+                    value
                 }
                 Expression::Binary {
                     op,
@@ -279,7 +250,6 @@ impl Evaluator {
                         Minus => binary_float(lhs, rhs, |x, y| x - y)?,
                         Multiply => binary_float(lhs, rhs, |x, y| x * y)?,
                         Divide => binary_float(lhs, rhs, |x, y| x / y)?,
-                        Assign => unreachable!("matched earlier"),
                     }
                 }
                 Expression::Variable { name, origin } => match self.environment.get(name) {
