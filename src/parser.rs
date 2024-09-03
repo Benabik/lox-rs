@@ -52,15 +52,14 @@ pub enum Statement<'de> {
 
 impl Display for Statement<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(")?;
         match self {
-            Statement::Expression(e) => e.fmt(f)?,
+            Statement::Expression(e) => e.fmt(f),
             Statement::Print(e) => {
-                write!(f, "print ")?;
+                write!(f, "(print ")?;
                 e.fmt(f)?;
+                write!(f, ")")
             }
         }
-        write!(f, ")")
     }
 }
 
