@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::parser::{Expression, LiteralValue, Block};
+use crate::parser::{Block, Expression, LiteralValue};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
-use miette::{Diagnostic, SourceSpan};
+use miette::{Context, Diagnostic, SourceSpan};
 use thiserror::Error;
 
 #[derive(Clone, Default, Debug, Display, From, PartialEq)]
@@ -128,24 +128,33 @@ impl UndefinedVariableError {
     }
 }
 
+type Environment = HashMap<String, Value>;
+
 #[derive(Clone, Debug, Default)]
 pub struct Evaluator {
-    globals: HashMap<String, Value>,
-    // scopes: Vec<HashMap<String, Value>>,
+    scopes: Vec<Environment>,
 }
 
 impl Evaluator {
+    fn scope(&mut self) -> miette::Result<&mut Environment> {
+        self.scopes
+            .last_mut()
+            .ok_or_else(|| miette::miette!("No scope found to set variable"))
+    }
+
     pub fn run(&mut self, prog: Block) -> miette::Result<()> {
+        self.scopes.push(Default::default());
         for d in prog.0 {
             use parser::Declaration::*;
             match d {
                 Declaration(name, expr) => {
-                    let val = if let Some(expr) = expr {
+                    let value = if let Some(expr) = expr {
                         self.expression(expr)?
                     } else {
                         Value::Nil
                     };
-                    self.globals.insert(name.to_string(), val);
+                    let scope = self.scope().wrap_err("in declaration")?;
+                    scope.insert(name.to_string(), value);
                 }
 
                 Statement(s) => {
@@ -164,6 +173,7 @@ impl Evaluator {
                 Block(block) => self.run(block)?,
             }
         }
+        self.scopes.pop();
         Ok(())
     }
 
@@ -185,7 +195,8 @@ impl Evaluator {
                 }
                 Expression::Assign { name, expr, origin } => {
                     let value = self.expression(*expr)?;
-                    match self.globals.get_mut(name) {
+                    let scope = self.scope().wrap_err("in assignment")?;
+                    match scope.get_mut(name) {
                         Some(var) => *var = value.clone(),
                         None => return Err(UndefinedVariableError::new(name, &origin).into()),
                     }
@@ -255,10 +266,14 @@ impl Evaluator {
                         Divide => binary_float(lhs, rhs, |x, y| x / y)?,
                     }
                 }
-                Expression::Variable { name, origin } => match self.globals.get(name) {
-                    Some(v) => v.clone(),
-                    None => return Err(UndefinedVariableError::new(name, &origin).into()),
-                },
+                Expression::Variable { name, origin } => {
+                    let scope = self.scope().wrap_err("in variable lookup")?;
+                    if let Some(value) = scope.get(name) {
+                        value.clone()
+                    } else {
+                        return Err(UndefinedVariableError::new(name.to_string(), &origin).into());
+                    }
+                }
             };
 
         Ok(val)

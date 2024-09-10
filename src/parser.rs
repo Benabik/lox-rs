@@ -373,7 +373,8 @@ impl<'de> Parser<'de> {
                 } else {
                     None
                 };
-                self.expect(TokenKind::SEMICOLON).wrap_err("in declaration")?;
+                self.expect(TokenKind::SEMICOLON)
+                    .wrap_err("in declaration")?;
                 Declaration::Declaration(var.text, expr)
             }
 
