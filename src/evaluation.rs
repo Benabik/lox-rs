@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::{Expression, LiteralValue, Program};
+use crate::parser::{Expression, LiteralValue, Block};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
 use miette::{Diagnostic, SourceSpan};
@@ -130,11 +130,12 @@ impl UndefinedVariableError {
 
 #[derive(Clone, Debug, Default)]
 pub struct Evaluator {
-    environment: HashMap<String, Value>,
+    globals: HashMap<String, Value>,
+    // scopes: Vec<HashMap<String, Value>>,
 }
 
 impl Evaluator {
-    pub fn run(&mut self, prog: Program) -> miette::Result<()> {
+    pub fn run(&mut self, prog: Block) -> miette::Result<()> {
         for d in prog.0 {
             use parser::Declaration::*;
             match d {
@@ -144,7 +145,7 @@ impl Evaluator {
                     } else {
                         Value::Nil
                     };
-                    self.environment.insert(name.to_string(), val);
+                    self.globals.insert(name.to_string(), val);
                 }
 
                 Statement(s) => {
@@ -159,6 +160,8 @@ impl Evaluator {
                         }
                     };
                 }
+
+                Block(block) => self.run(block)?,
             }
         }
         Ok(())
@@ -182,7 +185,7 @@ impl Evaluator {
                 }
                 Expression::Assign { name, expr, origin } => {
                     let value = self.expression(*expr)?;
-                    match self.environment.get_mut(name) {
+                    match self.globals.get_mut(name) {
                         Some(var) => *var = value.clone(),
                         None => return Err(UndefinedVariableError::new(name, &origin).into()),
                     }
@@ -252,7 +255,7 @@ impl Evaluator {
                         Divide => binary_float(lhs, rhs, |x, y| x / y)?,
                     }
                 }
-                Expression::Variable { name, origin } => match self.environment.get(name) {
+                Expression::Variable { name, origin } => match self.globals.get(name) {
                     Some(v) => v.clone(),
                     None => return Err(UndefinedVariableError::new(name, &origin).into()),
                 },

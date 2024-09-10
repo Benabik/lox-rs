@@ -7,17 +7,13 @@ use miette::{Context, Diagnostic, Report, SourceSpan};
 use thiserror::Error;
 
 #[derive(Clone, Debug, From, PartialEq)]
-pub struct Program<'de>(pub Vec<Declaration<'de>>);
+pub struct Block<'de>(pub Vec<Declaration<'de>>);
 
-impl Display for Program<'_> {
+impl Display for Block<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(")?;
-        let mut iter = self.0.iter();
-        if let Some(fst) = iter.next() {
-            write!(f, "{fst}")?;
-            for i in iter {
-                write!(f, " {i}")?;
-            }
+        write!(f, "(block")?;
+        for i in &self.0 {
+            write!(f, " {i}")?;
         }
         write!(f, ")")
     }
@@ -27,6 +23,7 @@ impl Display for Program<'_> {
 pub enum Declaration<'de> {
     Declaration(&'de str, Option<Expression<'de>>),
     Statement(Statement<'de>),
+    Block(Block<'de>),
 }
 
 impl Display for Declaration<'_> {
@@ -40,6 +37,7 @@ impl Display for Declaration<'_> {
                 write!(f, ")")
             }
             Declaration::Statement(expr) => expr.fmt(f),
+            Declaration::Block(block) => block.fmt(f),
         }
     }
 }
@@ -353,7 +351,7 @@ impl<'de> Parser<'de> {
         }
     }
 
-    pub fn program(&mut self) -> miette::Result<Program<'de>> {
+    pub fn program(&mut self) -> miette::Result<Block<'de>> {
         let mut statements = Vec::new();
         while self.lexer.peek().is_some() {
             statements.push(self.declaration().wrap_err("in program")?);
@@ -362,22 +360,39 @@ impl<'de> Parser<'de> {
     }
 
     pub fn declaration(&mut self) -> miette::Result<Declaration<'de>> {
-        if self.peek_for(TokenKind::VAR) {
-            self.lexer.next(); // Discard VAR
-            let var = self.expect(TokenKind::IDENTIFIER)?;
-            let expr = if self.peek_for(TokenKind::EQUAL) {
-                self.lexer.next(); // Discard EQUAL
-                Some(self.expression()?)
-            } else {
-                None
-            };
-            self.expect(TokenKind::SEMICOLON)?;
-            Ok(Declaration::Declaration(var.text, expr))
-        } else {
-            Ok(Declaration::Statement(
-                self.statement().wrap_err("in declaration")?,
-            ))
-        }
+        let ret = match self.lexer.peek() {
+            Some(Ok(Token {
+                kind: TokenKind::VAR,
+                ..
+            })) => {
+                self.lexer.next(); // Discard VAR
+                let var = self.expect(TokenKind::IDENTIFIER)?;
+                let expr = if self.peek_for(TokenKind::EQUAL) {
+                    self.lexer.next(); // Discard EQUAL
+                    Some(self.expression()?)
+                } else {
+                    None
+                };
+                self.expect(TokenKind::SEMICOLON).wrap_err("in declaration")?;
+                Declaration::Declaration(var.text, expr)
+            }
+
+            Some(Ok(Token {
+                kind: TokenKind::LEFT_BRACE,
+                ..
+            })) => {
+                self.lexer.next(); // Discard {
+                let mut block = Vec::new();
+                while !self.peek_for(TokenKind::RIGHT_BRACE) {
+                    block.push(self.declaration().wrap_err("in block")?);
+                }
+                self.expect(TokenKind::RIGHT_BRACE).wrap_err("in block")?;
+                Declaration::Block(Block(block))
+            }
+
+            _ => Declaration::Statement(self.statement().wrap_err("in declaration")?),
+        };
+        Ok(ret)
     }
 
     pub fn statement(&mut self) -> miette::Result<Statement<'de>> {
