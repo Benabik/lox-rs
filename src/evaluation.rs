@@ -136,12 +136,6 @@ pub struct Evaluator {
 }
 
 impl Evaluator {
-    fn scope(&mut self) -> miette::Result<&mut Environment> {
-        self.scopes
-            .last_mut()
-            .ok_or_else(|| miette::miette!("No scope found to set variable"))
-    }
-
     pub fn run(&mut self, prog: Block) -> miette::Result<()> {
         self.scopes.push(Default::default());
         for d in prog.0 {
@@ -153,8 +147,10 @@ impl Evaluator {
                     } else {
                         Value::Nil
                     };
-                    let scope = self.scope().wrap_err("in declaration")?;
-                    scope.insert(name.to_string(), value);
+                    self.scopes
+                        .last_mut()
+                        .expect("scope to have been created")
+                        .insert(name.to_string(), value);
                 }
 
                 Statement(s) => {
@@ -177,6 +173,14 @@ impl Evaluator {
         Ok(())
     }
 
+    fn lookup(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<&mut Value> {
+        self.scopes
+            .iter_mut()
+            .rev()
+            .find_map(|scope| scope.get_mut(name))
+            .ok_or_else(|| UndefinedVariableError::new(name, &origin).into())
+    }
+
     pub fn expression(&mut self, expr: Expression) -> miette::Result<Value> {
         let to_float = |val: Value, origin: &SourceLoc| f64::try_from(val).with_source_loc(origin);
         let to_string =
@@ -195,11 +199,8 @@ impl Evaluator {
                 }
                 Expression::Assign { name, expr, origin } => {
                     let value = self.expression(*expr)?;
-                    let scope = self.scope().wrap_err("in assignment")?;
-                    match scope.get_mut(name) {
-                        Some(var) => *var = value.clone(),
-                        None => return Err(UndefinedVariableError::new(name, &origin).into()),
-                    }
+                    let var = self.lookup(name, &origin)?;
+                    *var = value.clone();
                     value
                 }
                 Expression::Binary {
@@ -266,14 +267,8 @@ impl Evaluator {
                         Divide => binary_float(lhs, rhs, |x, y| x / y)?,
                     }
                 }
-                Expression::Variable { name, origin } => {
-                    let scope = self.scope().wrap_err("in variable lookup")?;
-                    if let Some(value) = scope.get(name) {
-                        value.clone()
-                    } else {
-                        return Err(UndefinedVariableError::new(name.to_string(), &origin).into());
-                    }
-                }
+
+                Expression::Variable { name, origin } => self.lookup(name, &origin)?.clone(),
             };
 
         Ok(val)
