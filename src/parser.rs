@@ -388,7 +388,9 @@ impl<'de> Parser<'de> {
         let ret = match self.peek_kind() {
             Some(TokenKind::VAR) => {
                 self.lexer.next(); // Discard VAR
-                let var = self.expect(TokenKind::IDENTIFIER)?;
+                let var = self
+                    .expect(TokenKind::IDENTIFIER)
+                    .wrap_err("in declaration")?;
                 let expr = if self.peek_for(TokenKind::EQUAL) {
                     self.lexer.next(); // Discard EQUAL
                     Some(self.expression()?)
@@ -409,9 +411,11 @@ impl<'de> Parser<'de> {
         let statement = match self.peek_kind() {
             Some(TokenKind::IF) => {
                 self.lexer.next(); // Discard IF
-                self.expect(TokenKind::LEFT_PAREN)?;
+                self.expect(TokenKind::LEFT_PAREN)
+                    .wrap_err("in if statement")?;
                 let condition = self.expression().wrap_err("in if condition")?;
-                self.expect(TokenKind::RIGHT_PAREN)?;
+                self.expect(TokenKind::RIGHT_PAREN)
+                    .wrap_err("in if statement")?;
 
                 // Delay placing in Box until after all parsing complete
                 let then = self.statement().wrap_err("in if statement")?;
@@ -442,13 +446,15 @@ impl<'de> Parser<'de> {
             Some(TokenKind::PRINT) => {
                 self.lexer.next(); // Discard PRINT
                 let expr = self.expression().wrap_err("in print statement")?;
-                self.expect(TokenKind::SEMICOLON)?;
+                self.expect(TokenKind::SEMICOLON)
+                    .wrap_err("in print statement")?;
                 Statement::Print(expr)
             }
 
             _ => {
                 let expr = self.expression().wrap_err("in expression statement")?;
-                self.expect(TokenKind::SEMICOLON)?;
+                self.expect(TokenKind::SEMICOLON)
+                    .wrap_err("in expression statement")?;
                 Statement::Expression(expr)
             }
         };
