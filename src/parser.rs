@@ -24,7 +24,7 @@ pub enum Declaration<'de> {
     Function {
         name: &'de str,
         arguments: Vec<&'de str>,
-        body: Statement<'de>,
+        body: Block<'de>,
     },
     #[from(forward)]
     Statement(Statement<'de>),
@@ -436,6 +436,13 @@ impl<'de> Parser<'de> {
         Ok(statements.into())
     }
 
+    pub fn block(&mut self) -> miette::Result<Block<'de>> {
+        self.expect(TokenKind::LEFT_BRACE).wrap_err("in block")?;
+        let ret = self.program()?;
+        self.expect(TokenKind::RIGHT_BRACE).wrap_err("in block")?;
+        Ok(ret)
+    }
+
     fn var_declaration(&mut self) -> miette::Result<Declaration<'de>> {
         self.expect(TokenKind::VAR).wrap_err("in var declaration")?;
         let var = self
@@ -474,7 +481,7 @@ impl<'de> Parser<'de> {
                 }
                 self.expect(TokenKind::RIGHT_PAREN).wrap_err("in function declaration")?;
 
-                let body = self.statement().wrap_err("in function declaration")?;
+                let body = self.block().wrap_err("in function declaration")?;
                 Declaration::Function {
                     name: name.text,
                     arguments,
@@ -577,15 +584,7 @@ impl<'de> Parser<'de> {
                 }
             }
 
-            Some(TokenKind::LEFT_BRACE) => {
-                self.lexer.next(); // Discard {
-                let mut block = Vec::new();
-                while !self.peek_for(TokenKind::RIGHT_BRACE) {
-                    block.push(self.declaration().wrap_err("in block")?);
-                }
-                self.expect(TokenKind::RIGHT_BRACE).wrap_err("in block")?;
-                Statement::Block(Block(block))
-            }
+            Some(TokenKind::LEFT_BRACE) => self.block()?.into(),
 
             Some(TokenKind::PRINT) => {
                 self.lexer.next(); // Discard PRINT

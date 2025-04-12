@@ -23,7 +23,7 @@ pub enum Value<'de> {
     Function {
         name: &'de str,
         arguments: Vec<&'de str>,
-        body: Statement<'de>,
+        body: Block<'de>,
     },
     Number(f64),
     String(String),
@@ -334,7 +334,7 @@ impl<'de> Evaluator<'de> {
                             scope.insert(name.to_string(), value);
                         }
                         self.scopes.push(scope);
-                        self.statement(&body)?;
+                        self.block(&body)?;
                         self.scopes.pop();
 
                         Value::Nil // TODO: Get return value
