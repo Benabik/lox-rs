@@ -81,6 +81,25 @@ impl Display for Statement<'_> {
     }
 }
 
+#[derive(Clone, Debug, From, PartialEq)]
+pub struct Arguments<'de>(pub Vec<Expression<'de>>);
+
+impl Display for Arguments<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut iter = self.0.iter();
+
+        if let Some(first) = iter.next() {
+            first.fmt(f)?;
+        }
+
+        for i in iter {
+            write!(f, " {i}")?;
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Display, Debug, PartialEq)]
 pub enum Expression<'de> {
     #[display("{value}")]
@@ -122,6 +141,13 @@ pub enum Expression<'de> {
         expr: Box<Expression<'de>>,
         origin: SourceLoc<'de>,
     },
+
+    #[display("(call {callee} {arguments})")]
+    Call {
+        callee: Box<Expression<'de>>,
+        arguments: Arguments<'de>,
+        origin: SourceLoc<'de>,
+    },
 }
 
 impl<'de> Expression<'de> {
@@ -133,6 +159,7 @@ impl<'de> Expression<'de> {
             Expression::Grouping { origin, .. } => origin,
             Expression::Variable { origin, .. } => origin,
             Expression::Assign { origin, .. } => origin,
+            Expression::Call { origin, .. } => origin,
         }
     }
 }
@@ -184,6 +211,7 @@ pub enum UnaryOp {
 impl UnaryOp {
     pub fn prefix_binding_power(&self) -> u8 {
         13 // One more than BinaryOp::Divide
+           // Call goes here
     }
 }
 
@@ -440,7 +468,7 @@ impl<'de> Parser<'de> {
                 };
 
                 let condition = if self.peek_for(TokenKind::SEMICOLON) {
-                    // No condition is infinite loop, so synthesize a true condition 
+                    // No condition is infinite loop, so synthesize a true condition
                     let Token { origin, .. } =
                         self.lexer.next().expect("peeked some").expect("peeked ok");
                     Expression::Literal {
@@ -601,7 +629,40 @@ impl<'de> Parser<'de> {
                     .wrap_err("expecting operator of expression");
                 }
                 Some(Ok(token)) => {
-                    // TODO: Check postfix
+                    if token.kind == TokenKind::LEFT_PAREN {
+                        // Call binding is tighter than anything else, so no check needed
+                        let Token { origin, .. } =
+                            self.lexer.next().expect("peeked Some").expect("peeked Ok");
+
+                        let mut arguments = Vec::new();
+                        while !self.peek_for(TokenKind::RIGHT_PAREN) {
+                            arguments.push(self.expression_bp(0)?);
+
+                            match self.peek_kind() {
+                                Some(TokenKind::COMMA) => {
+                                    self.lexer.next(); // discard COMMA
+                                }
+                                Some(TokenKind::RIGHT_PAREN) => (),
+                                Some(_) => {
+                                    let token =
+                                        self.lexer.next().expect("peeked Some").expect("peeked Ok");
+                                    return Err(UnexpectedTokenError::from(token))
+                                        .wrap_err("in function call");
+                                }
+                                None => {
+                                    return Err(UnexpectedEOFError::new(self.lexer.source()))
+                                        .wrap_err("expecting , or ) in function call");
+                                }
+                            }
+                        }
+                        self.lexer.next(); // discard RIGHT_PAREN
+
+                        return Ok(Expression::Call {
+                            callee: Box::new(lhs),
+                            arguments: arguments.into(),
+                            origin,
+                        });
+                    }
 
                     if token.kind == TokenKind::EQUAL {
                         // Assignment binding_power

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::time::SystemTime;
 
 use crate::parser::{Block, Expression, LiteralValue, Statement};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
-use miette::{Diagnostic, SourceSpan};
+use miette::{Diagnostic, IntoDiagnostic, SourceSpan};
 use thiserror::Error;
 
 #[derive(Clone, Default, Debug, Display, From, PartialEq)]
@@ -12,6 +13,12 @@ pub enum Value {
     #[default]
     Nil,
     Boolean(bool),
+    #[display("<builtin {name}({arity})>")]
+    Builtin {
+        name: &'static str,
+        arity: usize,
+        body: fn(&[Value]) -> miette::Result<Value>,
+    },
     Number(f64),
     String(String),
 }
@@ -38,6 +45,7 @@ impl From<&Value> for bool {
         // Lox uses truthyness, not strictly typed booleans
         match value {
             Value::Nil => false,
+            Value::Builtin { .. } => true,
             Value::Boolean(value) => *value,
             Value::Number(_) => true,
             Value::String(_) => true,
@@ -140,9 +148,57 @@ impl UndefinedVariableError {
     }
 }
 
+#[derive(Diagnostic, Debug, Error)]
+#[error("Wrong number of arguments, expected {expected}, got {got}")]
+pub struct BadArityError {
+    expected: usize,
+    got: usize,
+
+    #[label("here")]
+    span: Option<SourceSpan>,
+
+    #[source_code]
+    src: Option<String>,
+}
+
+impl BadArityError {
+    pub fn new(expected: usize, got: usize) -> Self {
+        Self {
+            expected,
+            got,
+            span: None,
+            src: None,
+        }
+    }
+}
+
+impl WithSourceLoc for BadArityError {
+    type Wrapped = miette::Error;
+
+    fn with_source_loc(mut self, loc: &SourceLoc) -> Self::Wrapped {
+        self.src = Some(loc.source.to_string());
+        self.span = Some(loc.into());
+        self.into()
+    }
+}
+
 type Environment = HashMap<String, Value>;
 
-#[derive(Clone, Debug, Default)]
+const GLOBALS: [(&str, Value); 1] = [(
+    "clock",
+    Value::Builtin {
+        name: "clock",
+        arity: 0,
+        body: |_| {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64().into())
+                .into_diagnostic()
+        },
+    },
+)];
+
+#[derive(Clone, Debug)]
 pub struct Evaluator {
     scopes: Vec<Environment>,
 }
@@ -232,6 +288,34 @@ impl Evaluator {
                 *var = value.clone();
                 value
             }
+            Expression::Call {
+                callee,
+                arguments,
+                origin,
+            } => {
+                let callee = self.expression(callee)?;
+
+                let Value::Builtin {
+                    name: _,
+                    arity,
+                    body,
+                } = callee
+                else {
+                    return Err(TypeError::new("function", callee).with_source_loc(origin));
+                };
+
+                let arguments = &arguments.0;
+                if arity != arguments.len() {
+                    return Err(BadArityError::new(arity, arguments.len()).with_source_loc(origin));
+                }
+
+                let arguments = arguments
+                    .iter()
+                    .map(|a| self.expression(a))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                body(&arguments)?
+            }
             Expression::Binary {
                 op,
                 lhs,
@@ -314,5 +398,17 @@ impl Evaluator {
         };
 
         Ok(val)
+    }
+}
+
+impl Default for Evaluator {
+    fn default() -> Self {
+        let mut globals = HashMap::new();
+        for (name, value) in GLOBALS {
+            globals.insert(name.into(), value);
+        }
+        Evaluator {
+            scopes: vec![globals],
+        }
     }
 }
