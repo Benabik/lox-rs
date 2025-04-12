@@ -21,15 +21,31 @@ impl Display for Block<'_> {
 
 #[derive(Clone, Debug, From, PartialEq)]
 pub enum Declaration<'de> {
-    Declaration(&'de str, Option<Expression<'de>>),
+    Function {
+        name: &'de str,
+        arguments: Vec<&'de str>,
+        body: Statement<'de>,
+    },
     #[from(forward)]
     Statement(Statement<'de>),
+    Variable(&'de str, Option<Expression<'de>>),
 }
 
 impl Display for Declaration<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Declaration::Declaration(name, expr) => {
+            Declaration::Function { name, arguments, body } => {
+                write!(f, "(fun {name} (")?;
+                let mut iter = arguments.iter();
+                if let Some(first) = iter.next() {
+                    first.fmt(f)?;
+                }
+                for i in iter {
+                    write!(f, " {i}")?;
+                }
+                write!(f, ") {body})")
+            }
+            Declaration::Variable(name, expr) => {
                 write!(f, "(var {}", name)?;
                 if let Some(expr) = expr {
                     write!(f, " {expr}")?;
@@ -433,11 +449,38 @@ impl<'de> Parser<'de> {
         };
         self.expect(TokenKind::SEMICOLON)
             .wrap_err("in var declaration")?;
-        Ok(Declaration::Declaration(var.text, expr))
+        Ok(Declaration::Variable(var.text, expr))
     }
 
     pub fn declaration(&mut self) -> miette::Result<Declaration<'de>> {
         let ret = match self.peek_kind() {
+            Some(TokenKind::FUN) => {
+                self.lexer.next(); // Discard FUN
+                let name = self
+                    .expect(TokenKind::IDENTIFIER)
+                    .wrap_err("in var declaration")?;
+
+                let mut arguments = Vec::new();
+                self.expect(TokenKind::LEFT_PAREN).wrap_err("in function declaration")?;
+                while !self.peek_for(TokenKind::RIGHT_PAREN) {
+                    let arg = self.expect(TokenKind::IDENTIFIER).wrap_err("in function declaration")?;
+                    arguments.push(arg.text);
+
+                    if self.peek_for(TokenKind::COMMA) {
+                        self.lexer.next(); // discard COMMA
+                    } else {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RIGHT_PAREN).wrap_err("in function declaration")?;
+
+                let body = self.statement().wrap_err("in function declaration")?;
+                Declaration::Function {
+                    name: name.text,
+                    arguments,
+                    body,
+                }
+            }
             Some(TokenKind::VAR) => self.var_declaration()?,
             _ => Declaration::Statement(self.statement().wrap_err("in declaration")?),
         };
@@ -638,24 +681,13 @@ impl<'de> Parser<'de> {
                         while !self.peek_for(TokenKind::RIGHT_PAREN) {
                             arguments.push(self.expression_bp(0)?);
 
-                            match self.peek_kind() {
-                                Some(TokenKind::COMMA) => {
-                                    self.lexer.next(); // discard COMMA
-                                }
-                                Some(TokenKind::RIGHT_PAREN) => (),
-                                Some(_) => {
-                                    let token =
-                                        self.lexer.next().expect("peeked Some").expect("peeked Ok");
-                                    return Err(UnexpectedTokenError::from(token))
-                                        .wrap_err("in function call");
-                                }
-                                None => {
-                                    return Err(UnexpectedEOFError::new(self.lexer.source()))
-                                        .wrap_err("expecting , or ) in function call");
-                                }
+                            if self.peek_for(TokenKind::COMMA) {
+                                self.lexer.next(); // discard COMMA
+                            } else {
+                                break;
                             }
                         }
-                        self.lexer.next(); // discard RIGHT_PAREN
+                        self.expect(TokenKind::RIGHT_PAREN).wrap_err("in function call")?;
 
                         lhs = Expression::Call {
                             callee: Box::new(lhs),

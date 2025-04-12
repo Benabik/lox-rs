@@ -8,23 +8,29 @@ use miette::{Diagnostic, IntoDiagnostic, SourceSpan};
 use thiserror::Error;
 
 #[derive(Clone, Default, Debug, Display, From, PartialEq)]
-pub enum Value {
+pub enum Value<'de> {
     #[display("nil")]
     #[default]
     Nil,
     Boolean(bool),
-    #[display("<builtin {name}({arity})>")]
+    #[display("<fn {name}>")]
     Builtin {
         name: &'static str,
         arity: usize,
-        body: fn(&[Value]) -> miette::Result<Value>,
+        body: fn(&[Value<'de>]) -> miette::Result<Value<'de>>,
+    },
+    #[display("<fn {name}>")]
+    Function {
+        name: &'de str,
+        arguments: Vec<&'de str>,
+        body: Statement<'de>,
     },
     Number(f64),
     String(String),
 }
 
-impl From<&LiteralValue<'_>> for Value {
-    fn from(value: &LiteralValue<'_>) -> Self {
+impl<'a> From<&LiteralValue<'a>> for Value<'_> {
+    fn from(value: &LiteralValue<'a>) -> Self {
         match value {
             LiteralValue::Number(val) => Value::Number(*val),
             LiteralValue::String(val) => Value::String(val.to_string()),
@@ -34,32 +40,33 @@ impl From<&LiteralValue<'_>> for Value {
     }
 }
 
-impl From<LiteralValue<'_>> for Value {
-    fn from(value: LiteralValue<'_>) -> Self {
+impl<'a> From<LiteralValue<'a>> for Value<'_> {
+    fn from(value: LiteralValue<'a>) -> Self {
         Value::from(&value)
     }
 }
 
-impl From<&Value> for bool {
+impl From<&Value<'_>> for bool {
     fn from(value: &Value) -> Self {
         // Lox uses truthyness, not strictly typed booleans
         match value {
             Value::Nil => false,
             Value::Builtin { .. } => true,
             Value::Boolean(value) => *value,
+            Value::Function { .. } => true,
             Value::Number(_) => true,
             Value::String(_) => true,
         }
     }
 }
 
-impl From<Value> for bool {
+impl From<Value<'_>> for bool {
     fn from(value: Value) -> Self {
         bool::from(&value)
     }
 }
 
-impl TryFrom<Value> for f64 {
+impl TryFrom<Value<'_>> for f64 {
     type Error = TypeError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -70,7 +77,7 @@ impl TryFrom<Value> for f64 {
     }
 }
 
-impl TryFrom<Value> for String {
+impl TryFrom<Value<'_>> for String {
     type Error = TypeError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -81,7 +88,7 @@ impl TryFrom<Value> for String {
     }
 }
 
-impl<'a> TryFrom<&'a Value> for &'a str {
+impl<'a> TryFrom<&'a Value<'_>> for &'a str {
     type Error = TypeError;
 
     fn try_from(value: &'a Value) -> Result<Self, Self::Error> {
@@ -96,7 +103,7 @@ impl<'a> TryFrom<&'a Value> for &'a str {
 #[error("Type Error, expected {expected}, got {value}")]
 pub struct TypeError {
     expected: &'static str,
-    value: Value,
+    value: String, // Avoiding threading the parser lifetime into errors
 
     #[label("here")]
     span: Option<SourceSpan>,
@@ -109,7 +116,7 @@ impl TypeError {
     pub fn new(expected: &'static str, value: Value) -> Self {
         TypeError {
             expected,
-            value,
+            value: value.to_string(),
             span: None,
             src: None,
         }
@@ -182,34 +189,38 @@ impl WithSourceLoc for BadArityError {
     }
 }
 
-type Environment = HashMap<String, Value>;
-
-const GLOBALS: [(&str, Value); 1] = [(
-    "clock",
-    Value::Builtin {
-        name: "clock",
-        arity: 0,
-        body: |_| {
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs_f64().into())
-                .into_diagnostic()
-        },
-    },
-)];
+type Environment<'de> = HashMap<String, Value<'de>>;
 
 #[derive(Clone, Debug)]
-pub struct Evaluator {
-    scopes: Vec<Environment>,
+pub struct Evaluator<'de> {
+    scopes: Vec<Environment<'de>>,
 }
 
-impl Evaluator {
-    pub fn block(&mut self, prog: &Block) -> miette::Result<()> {
+impl<'de> Evaluator<'de> {
+    pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<()> {
         self.scopes.push(Default::default());
         for d in &prog.0 {
             use parser::Declaration::*;
             match d {
-                Declaration(name, expr) => {
+                Function {
+                    name,
+                    arguments,
+                    body,
+                } => {
+                    self.scopes
+                        .last_mut()
+                        .expect("scope to have been created")
+                        .insert(
+                            name.to_string(),
+                            Value::Function {
+                                name,
+                                arguments: arguments.clone(),
+                                body: body.clone(),
+                            },
+                        );
+                }
+
+                Variable(name, expr) => {
                     let value = if let Some(expr) = expr {
                         self.expression(expr)?
                     } else {
@@ -228,7 +239,7 @@ impl Evaluator {
         Ok(())
     }
 
-    fn lookup(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<&mut Value> {
+    fn lookup(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<&mut Value<'de>> {
         self.scopes
             .iter_mut()
             .rev()
@@ -236,7 +247,7 @@ impl Evaluator {
             .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
     }
 
-    pub fn statement(&mut self, stmt: &Statement) -> miette::Result<()> {
+    pub fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<()> {
         use parser::Statement::*;
         match stmt {
             Block(block) => self.block(block)?,
@@ -267,7 +278,7 @@ impl Evaluator {
         Ok(())
     }
 
-    pub fn expression(&mut self, expr: &Expression) -> miette::Result<Value> {
+    pub fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Value<'de>> {
         let to_float = |val: Value, origin: &SourceLoc| f64::try_from(val).with_source_loc(origin);
         let to_string =
             |val: Value, origin: &SourceLoc| String::try_from(val).with_source_loc(origin);
@@ -295,13 +306,12 @@ impl Evaluator {
             } => {
                 let callee = self.expression(callee)?;
 
-                let Value::Builtin {
-                    name: _,
-                    arity,
-                    body,
-                } = callee
-                else {
-                    return Err(TypeError::new("function", callee).with_source_loc(origin));
+                let arity = match &callee {
+                    Value::Builtin { arity, .. } => *arity,
+                    Value::Function { arguments, .. } => arguments.len(),
+                    _ => {
+                        return Err(TypeError::new("function", callee).with_source_loc(origin));
+                    }
                 };
 
                 let arguments = &arguments.0;
@@ -314,7 +324,23 @@ impl Evaluator {
                     .map(|a| self.expression(a))
                     .collect::<Result<Vec<_>, _>>()?;
 
-                body(&arguments)?
+                match callee {
+                    Value::Builtin { body, ..} => {
+                        return body(&arguments);
+                    }
+                    Value::Function { body, arguments: names, .. } => {
+                        let mut scope = Environment::new();
+                        for (name, value) in names.iter().zip(arguments) {
+                            scope.insert(name.to_string(), value);
+                        }
+                        self.scopes.push(scope);
+                        self.statement(&body)?;
+                        self.scopes.pop();
+
+                        Value::Nil // TODO: Get return value
+                    },
+                    _ => unreachable!("type matched above"),
+                }
             }
             Expression::Binary {
                 op,
@@ -401,12 +427,23 @@ impl Evaluator {
     }
 }
 
-impl Default for Evaluator {
+impl Default for Evaluator<'_> {
     fn default() -> Self {
         let mut globals = HashMap::new();
-        for (name, value) in GLOBALS {
-            globals.insert(name.into(), value);
-        }
+
+        globals.insert("clock".into(), 
+            Value::Builtin {
+                name: "clock",
+                arity: 0,
+                body: |_| {
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64().into())
+                        .into_diagnostic()
+                }
+            }
+        );
+
         Evaluator {
             scopes: vec![globals],
         }
