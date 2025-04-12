@@ -69,6 +69,8 @@ pub enum Statement<'de> {
     },
     #[from(ignore)]
     Print(Expression<'de>),
+    #[from(ignore)]
+    Return(Option<Expression<'de>>),
     While {
         condition: Expression<'de>,
         body: Box<Statement<'de>>,
@@ -92,6 +94,8 @@ impl Display for Statement<'_> {
                 write!(f, ")")
             }
             Statement::Print(e) => write!(f, "(print {e})"),
+            Statement::Return(Some(e)) => write!(f, "(return {e})"),
+            Statement::Return(None) => write!(f, "(return)"),
             Statement::While { condition, body } => write!(f, "(while {condition} {body})"),
         }
     }
@@ -589,6 +593,18 @@ impl<'de> Parser<'de> {
                 self.expect(TokenKind::SEMICOLON)
                     .wrap_err("in print statement")?;
                 Statement::Print(expr)
+            }
+
+            Some(TokenKind::RETURN) => {
+                self.lexer.next(); // Discard RETURN
+                let expr = if self.peek_for(TokenKind::SEMICOLON) {
+                    None
+                } else {
+                    Some(self.expression().wrap_err("in return statement")?)
+                };
+                self.expect(TokenKind::SEMICOLON)
+                    .wrap_err("in return statement")?;
+                Statement::Return(expr)
             }
 
             Some(TokenKind::WHILE) => {

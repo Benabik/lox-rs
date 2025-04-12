@@ -197,7 +197,7 @@ pub struct Evaluator<'de> {
 }
 
 impl<'de> Evaluator<'de> {
-    pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<()> {
+    pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
         self.scopes.push(Default::default());
         for d in &prog.0 {
             use parser::Declaration::*;
@@ -232,11 +232,17 @@ impl<'de> Evaluator<'de> {
                         .insert(name.to_string(), value);
                 }
 
-                Statement(s) => self.statement(s)?,
+                Statement(s) => {
+                    // Statement was a return
+                    if let Some(value) = self.statement(s)? {
+                        self.scopes.pop();
+                        return Ok(Some(value));
+                    }
+                },
             }
         }
         self.scopes.pop();
-        Ok(())
+        Ok(None)
     }
 
     fn lookup(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<&mut Value<'de>> {
@@ -247,12 +253,13 @@ impl<'de> Evaluator<'de> {
             .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
     }
 
-    pub fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<()> {
+    pub fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<Option<Value<'de>>> {
         use parser::Statement::*;
-        match stmt {
+        let ret = match stmt {
             Block(block) => self.block(block)?,
             Expression(e) => {
                 self.expression(e)?;
+                None
             }
             If {
                 condition,
@@ -264,18 +271,26 @@ impl<'de> Evaluator<'de> {
                 } else {
                     other.as_ref()
                 };
-                if let Some(s) = s {
-                    self.statement(s)?;
-                }
+                s.map(|s| self.statement(s)).transpose()?.flatten()
             }
-            Print(e) => println!("{}", self.expression(e)?),
+            Print(e) => {
+                println!("{}", self.expression(e)?);
+                None
+            }
+            Return(Some(e)) => {
+                Some(self.expression(e)?)
+            }
+            Return(None) => Some(Value::Nil),
             While { condition, body } => {
                 while self.expression(condition)?.into() {
-                    self.statement(body)?;
+                    if let Some(value) = self.statement(body)? {
+                        return Ok(Some(value));
+                    }
                 }
+                None
             }
         };
-        Ok(())
+        Ok(ret)
     }
 
     pub fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Value<'de>> {
@@ -334,10 +349,10 @@ impl<'de> Evaluator<'de> {
                             scope.insert(name.to_string(), value);
                         }
                         self.scopes.push(scope);
-                        self.block(&body)?;
+                        let ret = self.block(&body)?;
                         self.scopes.pop();
 
-                        Value::Nil // TODO: Get return value
+                        ret.unwrap_or_default()
                     },
                     _ => unreachable!("type matched above"),
                 }
