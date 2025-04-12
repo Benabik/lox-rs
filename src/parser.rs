@@ -22,6 +22,7 @@ impl Display for Block<'_> {
 #[derive(Clone, Debug, From, PartialEq)]
 pub enum Declaration<'de> {
     Declaration(&'de str, Option<Expression<'de>>),
+    #[from(forward)]
     Statement(Statement<'de>),
 }
 
@@ -40,7 +41,8 @@ impl Display for Declaration<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, From, PartialEq)]
+#[from(forward)]
 pub enum Statement<'de> {
     Block(Block<'de>),
     Expression(Expression<'de>),
@@ -49,6 +51,7 @@ pub enum Statement<'de> {
         then: Box<Statement<'de>>,
         other: Option<Box<Statement<'de>>>,
     },
+    #[from(ignore)]
     Print(Expression<'de>),
     While {
         condition: Expression<'de>,
@@ -78,7 +81,7 @@ impl Display for Statement<'_> {
     }
 }
 
-#[derive(Clone, Display, Debug, From, PartialEq)]
+#[derive(Clone, Display, Debug, PartialEq)]
 pub enum Expression<'de> {
     #[display("{value}")]
     Literal {
@@ -389,24 +392,25 @@ impl<'de> Parser<'de> {
         Ok(statements.into())
     }
 
+    fn var_declaration(&mut self) -> miette::Result<Declaration<'de>> {
+        self.expect(TokenKind::VAR).wrap_err("in var declaration")?;
+        let var = self
+            .expect(TokenKind::IDENTIFIER)
+            .wrap_err("in var declaration")?;
+        let expr = if self.peek_for(TokenKind::EQUAL) {
+            self.lexer.next(); // Discard EQUAL
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.expect(TokenKind::SEMICOLON)
+            .wrap_err("in var declaration")?;
+        Ok(Declaration::Declaration(var.text, expr))
+    }
+
     pub fn declaration(&mut self) -> miette::Result<Declaration<'de>> {
         let ret = match self.peek_kind() {
-            Some(TokenKind::VAR) => {
-                self.lexer.next(); // Discard VAR
-                let var = self
-                    .expect(TokenKind::IDENTIFIER)
-                    .wrap_err("in declaration")?;
-                let expr = if self.peek_for(TokenKind::EQUAL) {
-                    self.lexer.next(); // Discard EQUAL
-                    Some(self.expression()?)
-                } else {
-                    None
-                };
-                self.expect(TokenKind::SEMICOLON)
-                    .wrap_err("in declaration")?;
-                Declaration::Declaration(var.text, expr)
-            }
-
+            Some(TokenKind::VAR) => self.var_declaration()?,
             _ => Declaration::Statement(self.statement().wrap_err("in declaration")?),
         };
         Ok(ret)
@@ -414,6 +418,70 @@ impl<'de> Parser<'de> {
 
     pub fn statement(&mut self) -> miette::Result<Statement<'de>> {
         let statement = match self.peek_kind() {
+            Some(TokenKind::FOR) => {
+                self.lexer.next(); // Discard FOR
+                self.expect(TokenKind::LEFT_PAREN)
+                    .wrap_err("in for statement")?;
+
+                let initializer = match self.peek_kind() {
+                    Some(TokenKind::VAR) => {
+                        Some(self.var_declaration().wrap_err("in for initializer")?)
+                    }
+                    Some(TokenKind::SEMICOLON) => {
+                        self.lexer.next(); // Discard SEMICOLON
+                        None
+                    }
+                    _ => {
+                        let expr = self.expression().wrap_err("in for initializer")?;
+                        self.expect(TokenKind::SEMICOLON)
+                            .wrap_err("in for initializer")?;
+                        Some(expr.into())
+                    }
+                };
+
+                let condition = if self.peek_for(TokenKind::SEMICOLON) {
+                    // No condition is infinite loop, so synthesize a true condition 
+                    let Token { origin, .. } =
+                        self.lexer.next().expect("peeked some").expect("peeked ok");
+                    Expression::Literal {
+                        value: true.into(),
+                        origin,
+                    }
+                } else {
+                    let expr = self.expression().wrap_err("in for condition")?;
+                    self.expect(TokenKind::SEMICOLON)
+                        .wrap_err("in for condition")?;
+                    expr
+                };
+
+                let increment = if self.peek_for(TokenKind::RIGHT_PAREN) {
+                    None
+                } else {
+                    let expr = self.expression().wrap_err("in for increment")?;
+                    Some(expr)
+                };
+
+                self.expect(TokenKind::RIGHT_PAREN)
+                    .wrap_err("in for statement")?;
+
+                let mut body = self.statement().wrap_err("in for statement")?;
+
+                if let Some(increment) = increment {
+                    body = Block(vec![body.into(), increment.into()]).into();
+                }
+
+                body = Statement::While {
+                    condition,
+                    body: Box::new(body),
+                };
+
+                if let Some(initializer) = initializer {
+                    body = Block(vec![initializer, body.into()]).into();
+                }
+
+                body
+            }
+
             Some(TokenKind::IF) => {
                 self.lexer.next(); // Discard IF
                 self.expect(TokenKind::LEFT_PAREN)
