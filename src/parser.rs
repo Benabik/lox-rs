@@ -333,7 +333,15 @@ impl<'de> Parser<'de> {
     }
 
     pub fn peek_for(&mut self, wanted: TokenKind) -> bool {
-        matches!(self.lexer.peek(), Some(Ok(Token { kind, .. })) if kind == &wanted)
+        self.peek_kind().map(|kind| kind == wanted).unwrap_or(false)
+    }
+
+    pub fn peek_kind(&mut self) -> Option<TokenKind> {
+        if let Some(Ok(Token { kind, .. })) = self.lexer.peek() {
+            Some(*kind)
+        } else {
+            None
+        }
     }
 
     pub fn expect(&mut self, expect: TokenKind) -> miette::Result<Token<'de>> {
@@ -373,11 +381,8 @@ impl<'de> Parser<'de> {
     }
 
     pub fn declaration(&mut self) -> miette::Result<Declaration<'de>> {
-        let ret = match self.lexer.peek() {
-            Some(Ok(Token {
-                kind: TokenKind::VAR,
-                ..
-            })) => {
+        let ret = match self.peek_kind() {
+            Some(TokenKind::VAR) => {
                 self.lexer.next(); // Discard VAR
                 let var = self.expect(TokenKind::IDENTIFIER)?;
                 let expr = if self.peek_for(TokenKind::EQUAL) {
@@ -391,10 +396,7 @@ impl<'de> Parser<'de> {
                 Declaration::Declaration(var.text, expr)
             }
 
-            Some(Ok(Token {
-                kind: TokenKind::LEFT_BRACE,
-                ..
-            })) => {
+            Some(TokenKind::LEFT_BRACE) => {
                 self.lexer.next(); // Discard {
                 let mut block = Vec::new();
                 while !self.peek_for(TokenKind::RIGHT_BRACE) {
@@ -410,11 +412,8 @@ impl<'de> Parser<'de> {
     }
 
     pub fn statement(&mut self) -> miette::Result<Statement<'de>> {
-        let statement = match self.lexer.peek() {
-            Some(Ok(Token {
-                kind: TokenKind::IF,
-                ..
-            })) => {
+        let statement = match self.peek_kind() {
+            Some(TokenKind::IF) => {
                 self.lexer.next(); // Discard IF
                 self.expect(TokenKind::LEFT_PAREN)?;
                 let condition = self.expression().wrap_err("in if condition")?;
@@ -433,10 +432,7 @@ impl<'de> Parser<'de> {
                 }))
             }
 
-            Some(Ok(Token {
-                kind: TokenKind::PRINT,
-                ..
-            })) => {
+            Some(TokenKind::PRINT) => {
                 self.lexer.next(); // Discard PRINT
                 let expr = self.expression().wrap_err("in print statement")?;
                 self.expect(TokenKind::SEMICOLON)?;
