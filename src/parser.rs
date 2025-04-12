@@ -42,9 +42,17 @@ impl Display for Declaration<'_> {
     }
 }
 
+#[derive(Clone, Debug, From, PartialEq)]
+pub struct If<'de> {
+    pub condition: Expression<'de>,
+    pub then: Statement<'de>,
+    pub other: Option<Statement<'de>>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement<'de> {
     Expression(Expression<'de>),
+    If(Box<If<'de>>),
     Print(Expression<'de>),
 }
 
@@ -52,9 +60,19 @@ impl Display for Statement<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Statement::Expression(e) => e.fmt(f),
+            Statement::If(iffy) => {
+                let If {
+                    condition,
+                    then,
+                    other,
+                } = &**iffy;
+                write!(f, "(if {condition} {then}")?;
+                if let Some(other) = other {
+                    write!(f, " {other}")?;
+                }
                 write!(f, ")")
             }
-            Statement::Print(e) => write!(f, "(print {e})")
+            Statement::Print(e) => write!(f, "(print {e})"),
         }
     }
 }
@@ -393,6 +411,28 @@ impl<'de> Parser<'de> {
 
     pub fn statement(&mut self) -> miette::Result<Statement<'de>> {
         let statement = match self.lexer.peek() {
+            Some(Ok(Token {
+                kind: TokenKind::IF,
+                ..
+            })) => {
+                self.lexer.next(); // Discard IF
+                self.expect(TokenKind::LEFT_PAREN)?;
+                let condition = self.expression().wrap_err("in if condition")?;
+                self.expect(TokenKind::RIGHT_PAREN)?;
+                let then = self.statement().wrap_err("in if statement")?;
+                let other = if self.peek_for(TokenKind::ELSE) {
+                    self.lexer.next(); // Discard ELSE
+                    Some(self.statement().wrap_err("in else statement")?)
+                } else {
+                    None
+                };
+                Statement::If(Box::new(If {
+                    condition,
+                    then,
+                    other,
+                }))
+            }
+
             Some(Ok(Token {
                 kind: TokenKind::PRINT,
                 ..

@@ -175,6 +175,21 @@ impl Evaluator {
             Expression(e) => {
                 self.expression(e)?;
             }
+            If(iffy) => {
+                let parser::If {
+                    condition,
+                    then,
+                    other,
+                } = *iffy;
+                let s = if self.expression(condition)?.into() {
+                    Some(then)
+                } else {
+                    other
+                };
+                if let Some(s) = s {
+                    self.statement(s)?;
+                }
+            }
             Print(e) => println!("{}", self.expression(e)?),
         };
         Ok(())
