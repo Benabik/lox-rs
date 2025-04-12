@@ -5,7 +5,7 @@ pub mod parser;
 pub use parser::Parser;
 
 pub mod evaluation;
-pub use evaluation::Evaluator;
+pub use evaluation::Interpreter;
 
 use miette::{LabeledSpan, MietteDiagnostic, Report};
 

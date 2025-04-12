@@ -265,11 +265,11 @@ impl PartialEq for Environment<'_> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Evaluator<'de> {
+pub struct Interpreter<'de> {
     scope: Environment<'de>,
 }
 
-impl<'de> Evaluator<'de> {
+impl<'de> Interpreter<'de> {
     pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
         for d in &prog.0 {
             use parser::Declaration::*;
@@ -504,7 +504,7 @@ impl<'de> Evaluator<'de> {
     }
 }
 
-impl Default for Evaluator<'_> {
+impl Default for Interpreter<'_> {
     fn default() -> Self {
         let mut globals = Environment::default();
 
@@ -522,7 +522,7 @@ impl Default for Evaluator<'_> {
             },
         );
 
-        Evaluator {
+        Interpreter {
             scope: globals.push(),
         }
     }

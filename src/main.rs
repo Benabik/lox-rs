@@ -63,7 +63,7 @@ fn main() -> miette::Result<()> {
     }
 
     let mut parser = imp::Parser::new(&mut lexer);
-    let mut evaluator = imp::Evaluator::default();
+    let mut interpreter = imp::Interpreter::default();
 
     match args.command {
         Commands::Tokenize { .. } => unreachable!("exited earlier"),
@@ -81,7 +81,7 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            match evaluator.expression(&expr) {
+            match interpreter.expression(&expr) {
                 Ok(val) => println!("{val}"),
                 Err(e) => {
                     eprintln!("{e:?}");
@@ -103,7 +103,7 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            if let Err(e) = evaluator.block(&prog) {
+            if let Err(e) = interpreter.block(&prog) {
                 eprintln!("{e:?}");
                 std::process::exit(70);
             }
