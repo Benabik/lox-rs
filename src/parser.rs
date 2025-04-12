@@ -438,9 +438,12 @@ impl<'de> Parser<'de> {
 
     pub fn block(&mut self) -> miette::Result<Block<'de>> {
         self.expect(TokenKind::LEFT_BRACE).wrap_err("in block")?;
-        let ret = self.program()?;
+        let mut statements = Vec::new();
+        while !self.peek_for(TokenKind::RIGHT_BRACE) {
+            statements.push(self.declaration().wrap_err("in block")?);
+        }
         self.expect(TokenKind::RIGHT_BRACE).wrap_err("in block")?;
-        Ok(ret)
+        Ok(statements.into())
     }
 
     fn var_declaration(&mut self) -> miette::Result<Declaration<'de>> {
