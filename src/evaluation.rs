@@ -235,6 +235,8 @@ impl Evaluator {
 
                     use parser::BinaryOp::*;
                     match op {
+                        Or => Value::from(lhs.into() || rhs.into()),
+                        And => Value::from(lhs.into() && rhs.into()),
                         Equal => Value::from(lhs == rhs),
                         NotEqual => Value::from(lhs != rhs),
                         Less | LessEqual | Greater | GreaterEqual => match lhs {
