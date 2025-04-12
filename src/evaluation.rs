@@ -195,7 +195,7 @@ impl WithSourceLoc for BadArityError {
 #[derive(Clone, Default, Debug)]
 struct Frame<'de> {
     parent: Option<Environment<'de>>,
-    values: HashMap<String, Value<'de>>,
+    values: HashMap<&'de str, Value<'de>>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -253,8 +253,8 @@ impl<'de> Environment<'de> {
         }
     }
 
-    fn define(&mut self, name: impl ToString, value: Value<'de>) {
-        self.0.borrow_mut().values.insert(name.to_string(), value);
+    fn define(&mut self, name: &'de str, value: Value<'de>) {
+        self.0.borrow_mut().values.insert(name, value);
     }
 }
 
