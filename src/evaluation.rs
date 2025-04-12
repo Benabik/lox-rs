@@ -27,15 +27,21 @@ impl From<LiteralValue<'_>> for Value {
     }
 }
 
-impl From<Value> for bool {
-    fn from(value: Value) -> Self {
+impl From<&Value> for bool {
+    fn from(value: &Value) -> Self {
         // Lox uses truthyness, not strictly typed booleans
         match value {
-            Value::Nil => false,
-            Value::Boolean(value) => value,
-            Value::Number(_) => true,
-            Value::String(_) => true,
+            &Value::Nil => false,
+            &Value::Boolean(value) => value,
+            &Value::Number(_) => true,
+            &Value::String(_) => true,
         }
+    }
+}
+
+impl From<Value> for bool {
+    fn from(value: Value) -> Self {
+        bool::from(&value)
     }
 }
 
@@ -223,8 +229,18 @@ impl Evaluator {
                     rhs,
                     origin,
                 } => {
-                    // TODO: lhs shouldn't be evaluated if op is Assign
                     let lhs = self.expression(*lhs)?;
+
+                    // Evaluate logical ops before RHS for short-circuiting
+                    if matches!(op, Or | And) {
+                        let truth = bool::from(&lhs);
+                        return Ok(match (truth, op) {
+                            (true, Or) => lhs,
+                            (false, And) => lhs,
+                            _ => self.expression(*rhs)?,
+                        });
+                    }
+
                     let rhs = self.expression(*rhs)?;
 
                     let binary_float = |lhs, rhs, f: fn(f64, f64) -> f64| {
@@ -235,8 +251,7 @@ impl Evaluator {
 
                     use parser::BinaryOp::*;
                     match op {
-                        Or => Value::from(lhs.into() || rhs.into()),
-                        And => Value::from(lhs.into() && rhs.into()),
+                        Or | And => unreachable!("matched above"),
                         Equal => Value::from(lhs == rhs),
                         NotEqual => Value::from(lhs != rhs),
                         Less | LessEqual | Greater | GreaterEqual => match lhs {
