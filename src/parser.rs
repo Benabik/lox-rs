@@ -102,13 +102,7 @@ pub struct Arguments<'de>(pub Vec<Expression<'de>>);
 
 impl Display for Arguments<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut iter = self.0.iter();
-
-        if let Some(first) = iter.next() {
-            first.fmt(f)?;
-        }
-
-        for i in iter {
+        for i in &self.0 {
             write!(f, " {i}")?;
         }
 
@@ -158,7 +152,7 @@ pub enum Expression<'de> {
         origin: SourceLoc<'de>,
     },
 
-    #[display("(call {callee} {arguments})")]
+    #[display("(call {callee}{arguments})")]
     Call {
         callee: Box<Expression<'de>>,
         arguments: Arguments<'de>,
