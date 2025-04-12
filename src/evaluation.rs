@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::{Block, Expression, LiteralValue};
+use crate::parser::{Block, Expression, LiteralValue, Statement};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
 use miette::{Diagnostic, SourceSpan};
@@ -153,19 +153,7 @@ impl Evaluator {
                         .insert(name.to_string(), value);
                 }
 
-                Statement(s) => {
-                    use parser::Statement::*;
-                    match s {
-                        Expression(e) => {
-                            self.expression(e)?;
-                        }
-                        Print(e) => {
-                            let val = self.expression(e)?;
-                            println!("{val}");
-                        }
-                    };
-                }
-
+                Statement(s) => self.statement(s)?,
                 Block(block) => self.run(block)?,
             }
         }
@@ -179,6 +167,17 @@ impl Evaluator {
             .rev()
             .find_map(|scope| scope.get_mut(name))
             .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
+    }
+
+    pub fn statement(&mut self, stmt: Statement) -> miette::Result<()> {
+        use parser::Statement::*;
+        match stmt {
+            Expression(e) => {
+                self.expression(e)?;
+            }
+            Print(e) => println!("{}", self.expression(e)?),
+        };
+        Ok(())
     }
 
     pub fn expression(&mut self, expr: Expression) -> miette::Result<Value> {

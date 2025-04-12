@@ -52,11 +52,9 @@ impl Display for Statement<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Statement::Expression(e) => e.fmt(f),
-            Statement::Print(e) => {
-                write!(f, "(print ")?;
-                e.fmt(f)?;
                 write!(f, ")")
             }
+            Statement::Print(e) => write!(f, "(print {e})")
         }
     }
 }
@@ -394,13 +392,23 @@ impl<'de> Parser<'de> {
     }
 
     pub fn statement(&mut self) -> miette::Result<Statement<'de>> {
-        let statement = if self.peek_for(TokenKind::PRINT) {
-            self.lexer.next(); // Discard PRINT
-            Statement::Print(self.expression().wrap_err("in print statement")?)
-        } else {
-            Statement::Expression(self.expression().wrap_err("in expression statement")?)
+        let statement = match self.lexer.peek() {
+            Some(Ok(Token {
+                kind: TokenKind::PRINT,
+                ..
+            })) => {
+                self.lexer.next(); // Discard PRINT
+                let expr = self.expression().wrap_err("in print statement")?;
+                self.expect(TokenKind::SEMICOLON)?;
+                Statement::Print(expr)
+            }
+
+            _ => {
+                let expr = self.expression().wrap_err("in expression statement")?;
+                self.expect(TokenKind::SEMICOLON)?;
+                Statement::Expression(expr)
+            }
         };
-        self.expect(TokenKind::SEMICOLON)?;
         Ok(statement)
     }
 
