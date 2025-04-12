@@ -103,7 +103,7 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            if let Err(e) = evaluator.run(prog) {
+            if let Err(e) = evaluator.block(prog) {
                 eprintln!("{e:?}");
                 std::process::exit(70);
             }

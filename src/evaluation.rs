@@ -136,7 +136,7 @@ pub struct Evaluator {
 }
 
 impl Evaluator {
-    pub fn run(&mut self, prog: Block) -> miette::Result<()> {
+    pub fn block(&mut self, prog: Block) -> miette::Result<()> {
         self.scopes.push(Default::default());
         for d in prog.0 {
             use parser::Declaration::*;
@@ -154,7 +154,7 @@ impl Evaluator {
                 }
 
                 Statement(s) => self.statement(s)?,
-                Block(block) => self.run(block)?,
+                Block(block) => self.block(block)?,
             }
         }
         self.scopes.pop();
