@@ -1,4 +1,6 @@
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::SystemTime;
 
 use crate::parser::{Block, Expression, LiteralValue, Statement};
@@ -20,10 +22,11 @@ pub enum Value<'de> {
         body: fn(&[Value<'de>]) -> miette::Result<Value<'de>>,
     },
     #[display("<fn {name}>")]
-    Function {
+    Closure {
         name: &'de str,
         arguments: Vec<&'de str>,
         body: Block<'de>,
+        environment: Environment<'de>,
     },
     Number(f64),
     String(String),
@@ -53,7 +56,7 @@ impl From<&Value<'_>> for bool {
             Value::Nil => false,
             Value::Builtin { .. } => true,
             Value::Boolean(value) => *value,
-            Value::Function { .. } => true,
+            Value::Closure { .. } => true,
             Value::Number(_) => true,
             Value::String(_) => true,
         }
@@ -189,16 +192,85 @@ impl WithSourceLoc for BadArityError {
     }
 }
 
-type Environment<'de> = HashMap<String, Value<'de>>;
+#[derive(Clone, Default, Debug)]
+struct Frame<'de> {
+    parent: Option<Environment<'de>>,
+    values: HashMap<String, Value<'de>>,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct Environment<'de>(Rc<RefCell<Frame<'de>>>);
+
+impl<'de> Environment<'de> {
+    fn new(parent: Environment<'de>) -> Self {
+        Self(Rc::new(RefCell::new(Frame {
+            parent: Some(parent),
+            values: Default::default(),
+        })))
+    }
+
+    fn push(&self) -> Self {
+        Self::new(self.clone())
+    }
+
+    fn pop(&self) -> Option<Self> {
+        (*self.0).borrow().parent.clone()
+    }
+
+    fn get(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<Value<'de>> {
+        let (values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
+            (&mut frame.values, &mut frame.parent)
+        });
+        if let Some(value) = values.get(name) {
+            Ok(value.clone())
+        } else {
+            parent
+                .as_mut()
+                .map(|parent| parent.get(name, origin))
+                .transpose()?
+                .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
+        }
+    }
+
+    fn assign(
+        &mut self,
+        name: &str,
+        value: Value<'de>,
+        origin: &SourceLoc,
+    ) -> miette::Result<Value<'de>> {
+        let (mut values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
+            (&mut frame.values, &mut frame.parent)
+        });
+        if let Some(v) = values.get_mut(name) {
+            *v = value.clone();
+            Ok(value)
+        } else {
+            parent
+                .as_mut()
+                .map(|parent| parent.assign(name, value, origin))
+                .transpose()?
+                .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
+        }
+    }
+
+    fn define(&mut self, name: impl ToString, value: Value<'de>) {
+        self.0.borrow_mut().values.insert(name.to_string(), value);
+    }
+}
+
+impl PartialEq for Environment<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Evaluator<'de> {
-    scopes: Vec<Environment<'de>>,
+    scope: Environment<'de>,
 }
 
 impl<'de> Evaluator<'de> {
     pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
-        self.scopes.push(Default::default());
         for d in &prog.0 {
             use parser::Declaration::*;
             match d {
@@ -207,17 +279,15 @@ impl<'de> Evaluator<'de> {
                     arguments,
                     body,
                 } => {
-                    self.scopes
-                        .last_mut()
-                        .expect("scope to have been created")
-                        .insert(
-                            name.to_string(),
-                            Value::Function {
-                                name,
-                                arguments: arguments.clone(),
-                                body: body.clone(),
-                            },
-                        );
+                    self.scope.define(
+                        name,
+                        Value::Closure {
+                            name,
+                            arguments: arguments.clone(),
+                            body: body.clone(),
+                            environment: self.scope.clone(),
+                        },
+                    );
                 }
 
                 Variable(name, expr) => {
@@ -226,37 +296,29 @@ impl<'de> Evaluator<'de> {
                     } else {
                         Value::Nil
                     };
-                    self.scopes
-                        .last_mut()
-                        .expect("scope to have been created")
-                        .insert(name.to_string(), value);
+                    self.scope.define(name, value);
                 }
 
                 Statement(s) => {
                     // Statement was a return
                     if let Some(value) = self.statement(s)? {
-                        self.scopes.pop();
                         return Ok(Some(value));
                     }
-                },
+                }
             }
         }
-        self.scopes.pop();
         Ok(None)
-    }
-
-    fn lookup(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<&mut Value<'de>> {
-        self.scopes
-            .iter_mut()
-            .rev()
-            .find_map(|scope| scope.get_mut(name))
-            .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
     }
 
     pub fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<Option<Value<'de>>> {
         use parser::Statement::*;
         let ret = match stmt {
-            Block(block) => self.block(block)?,
+            Block(block) => {
+                self.scope = self.scope.push();
+                let ret = self.block(block)?;
+                self.scope = self.scope.pop().expect("exited top scope");
+                ret
+            }
             Expression(e) => {
                 self.expression(e)?;
                 None
@@ -277,9 +339,7 @@ impl<'de> Evaluator<'de> {
                 println!("{}", self.expression(e)?);
                 None
             }
-            Return(Some(e)) => {
-                Some(self.expression(e)?)
-            }
+            Return(Some(e)) => Some(self.expression(e)?),
             Return(None) => Some(Value::Nil),
             While { condition, body } => {
                 while self.expression(condition)?.into() {
@@ -310,9 +370,7 @@ impl<'de> Evaluator<'de> {
             }
             Expression::Assign { name, expr, origin } => {
                 let value = self.expression(expr)?;
-                let var = self.lookup(name, origin)?;
-                *var = value.clone();
-                value
+                self.scope.assign(name, value, origin)?
             }
             Expression::Call {
                 callee,
@@ -323,7 +381,7 @@ impl<'de> Evaluator<'de> {
 
                 let arity = match &callee {
                     Value::Builtin { arity, .. } => *arity,
-                    Value::Function { arguments, .. } => arguments.len(),
+                    Value::Closure { arguments, .. } => arguments.len(),
                     _ => {
                         return Err(TypeError::new("function", callee).with_source_loc(origin));
                     }
@@ -340,20 +398,24 @@ impl<'de> Evaluator<'de> {
                     .collect::<Result<Vec<_>, _>>()?;
 
                 match callee {
-                    Value::Builtin { body, ..} => {
+                    Value::Builtin { body, .. } => {
                         return body(&arguments);
                     }
-                    Value::Function { body, arguments: names, .. } => {
-                        let mut scope = Environment::new();
+                    Value::Closure {
+                        body,
+                        arguments: names,
+                        environment: parent,
+                        ..
+                    } => {
+                        let outer = self.scope.clone();
+                        self.scope = parent.push();
                         for (name, value) in names.iter().zip(arguments) {
-                            scope.insert(name.to_string(), value);
+                            self.scope.define(name, value);
                         }
-                        self.scopes.push(scope);
                         let ret = self.block(&body)?;
-                        self.scopes.pop();
-
+                        self.scope = outer;
                         ret.unwrap_or_default()
-                    },
+                    }
                     _ => unreachable!("type matched above"),
                 }
             }
@@ -435,7 +497,7 @@ impl<'de> Evaluator<'de> {
                 }
             }
 
-            Expression::Variable { name, origin } => self.lookup(name, origin)?.clone(),
+            Expression::Variable { name, origin } => self.scope.get(name, origin)?,
         };
 
         Ok(val)
@@ -444,9 +506,10 @@ impl<'de> Evaluator<'de> {
 
 impl Default for Evaluator<'_> {
     fn default() -> Self {
-        let mut globals = HashMap::new();
+        let mut globals = Environment::default();
 
-        globals.insert("clock".into(), 
+        globals.define(
+            "clock",
             Value::Builtin {
                 name: "clock",
                 arity: 0,
@@ -455,12 +518,12 @@ impl Default for Evaluator<'_> {
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .map(|d| d.as_secs_f64().into())
                         .into_diagnostic()
-                }
-            }
+                },
+            },
         );
 
         Evaluator {
-            scopes: vec![globals],
+            scope: globals.push(),
         }
     }
 }
