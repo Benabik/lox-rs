@@ -3,7 +3,7 @@ use crate::{
     Lexer, SourceLoc, WithSourceLoc,
 };
 use derive_more::{Display, From};
-use miette::{Context, Diagnostic, Report, SourceSpan};
+use miette::{Context, Diagnostic, SourceSpan};
 use thiserror::Error;
 
 #[derive(Clone, Debug, From, PartialEq)]
@@ -249,10 +249,10 @@ pub struct UnexpectedEOFError {
 }
 
 impl UnexpectedEOFError {
-    fn new<T: ToString>(source: T) -> Report {
+    fn new<T: ToString>(source: T) -> Self {
         let src = source.to_string();
         let span = SourceSpan::new((src.len() - 1).into(), 1);
-        Self { src, span }.into()
+        Self { src, span }
     }
 }
 
@@ -317,10 +317,7 @@ impl<'de> Parser<'de> {
     }
 
     pub fn peek_for(&mut self, wanted: TokenKind) -> bool {
-        match self.lexer.peek() {
-            Some(Ok(Token { kind, .. })) if kind == &wanted => true,
-            _ => false,
-        }
+        matches!(self.lexer.peek(), Some(Ok(Token { kind, .. })) if kind == &wanted)
     }
 
     pub fn expect(&mut self, expect: TokenKind) -> miette::Result<Token<'de>> {

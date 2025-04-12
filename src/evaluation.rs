@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::parser::{Block, Expression, LiteralValue};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
-use miette::{Context, Diagnostic, SourceSpan};
+use miette::{Diagnostic, SourceSpan};
 use thiserror::Error;
 
 #[derive(Clone, Default, Debug, Display, From, PartialEq)]
@@ -178,7 +178,7 @@ impl Evaluator {
             .iter_mut()
             .rev()
             .find_map(|scope| scope.get_mut(name))
-            .ok_or_else(|| UndefinedVariableError::new(name, &origin).into())
+            .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
     }
 
     pub fn expression(&mut self, expr: Expression) -> miette::Result<Value> {

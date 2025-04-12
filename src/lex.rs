@@ -1,4 +1,4 @@
-use miette::{Diagnostic, Report, SourceSpan};
+use miette::{Diagnostic, SourceSpan};
 use std::fmt::Display;
 use thiserror::Error;
 
@@ -51,7 +51,7 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
-    fn to_str(&self, text: &str) -> String {
+    fn as_string(&self, text: &str) -> String {
         match self {
             TokenKind::NUMBER => {
                 let value: f64 = text.parse().expect("Lexing should ensure valid number");
@@ -76,7 +76,7 @@ pub struct Token<'de> {
     pub origin: SourceLoc<'de>,
 }
 
-impl<'de> Display for Token<'de> {
+impl Display for Token<'_> {
     /// Formatted as per test requirements
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -84,7 +84,7 @@ impl<'de> Display for Token<'de> {
             "{:?} {} {}",
             self.kind,
             self.text,
-            self.kind.to_str(self.text)
+            self.kind.as_string(self.text)
         )
     }
 }
@@ -119,13 +119,12 @@ pub struct UnexpectedCharError {
 }
 
 impl UnexpectedCharError {
-    fn new(c: char, loc: SourceLoc) -> Report {
+    fn new(c: char, loc: SourceLoc) -> Self {
         Self {
             c,
             src: loc.source.to_string(),
             span: SourceSpan::new(loc.offset.into(), loc.len),
         }
-        .into()
     }
 }
 
@@ -140,12 +139,11 @@ pub struct UnterminatedStringError {
 }
 
 impl UnterminatedStringError {
-    fn new(loc: SourceLoc) -> Report {
+    fn new(loc: SourceLoc) -> Self {
         Self {
             src: loc.source.to_string(),
             span: SourceSpan::new(loc.offset.into(), loc.len),
         }
-        .into()
     }
 }
 
@@ -249,7 +247,7 @@ impl<'de> Iterator for Lexer<'de> {
                 '/' => {
                     if let Some('/') = chars.next() {
                         // Advance until newline...
-                        let line_end = self.rest.find('\n').unwrap_or_else(|| self.rest.len());
+                        let line_end = self.rest.find('\n').unwrap_or(self.rest.len());
                         self.advance(line_end);
                         continue;
                     } else {
@@ -259,7 +257,9 @@ impl<'de> Iterator for Lexer<'de> {
 
                 _ => {
                     self.advance(c_len);
-                    return Some(Err(UnexpectedCharError::new(c, self.source_loc(c_len))));
+                    return Some(Err(
+                        UnexpectedCharError::new(c, self.source_loc(c_len)).into()
+                    ));
                 }
             };
 
@@ -307,7 +307,7 @@ impl<'de> Iterator for Lexer<'de> {
 
                         // Consume rest of source
                         self.rest = &self.rest[self.rest.len()..];
-                        return Some(Err(UnterminatedStringError::new(loc)));
+                        return Some(Err(UnterminatedStringError::new(loc).into()));
                     }
                 }
                 Started::Number => {
@@ -324,7 +324,7 @@ impl<'de> Iterator for Lexer<'de> {
                         (Some(one), Some(two), Some(_)) => {
                             text = &text[..one.len() + 1 + two.len()];
                         }
-                        (Some(one), Some(two), None) if two.is_empty() => {
+                        (Some(one), Some(""), None) => {
                             text = &text[..one.len()];
                         }
                         _ => { /* leave text as-is */ }
