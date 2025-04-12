@@ -202,6 +202,11 @@ impl Evaluator {
                 }
             }
             Print(e) => println!("{}", self.expression(e)?),
+            While { condition, body } => {
+                while self.expression(condition)?.into() {
+                    self.statement(body)?;
+                }
+            }
         };
         Ok(())
     }

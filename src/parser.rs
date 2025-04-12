@@ -50,6 +50,10 @@ pub enum Statement<'de> {
         other: Option<Box<Statement<'de>>>,
     },
     Print(Expression<'de>),
+    While {
+        condition: Expression<'de>,
+        body: Box<Statement<'de>>,
+    },
 }
 
 impl Display for Statement<'_> {
@@ -69,6 +73,7 @@ impl Display for Statement<'_> {
                 write!(f, ")")
             }
             Statement::Print(e) => write!(f, "(print {e})"),
+            Statement::While { condition, body } => write!(f, "(while {condition} {body})"),
         }
     }
 }
@@ -449,6 +454,13 @@ impl<'de> Parser<'de> {
                 self.expect(TokenKind::SEMICOLON)
                     .wrap_err("in print statement")?;
                 Statement::Print(expr)
+            }
+
+            Some(TokenKind::WHILE) => {
+                self.lexer.next(); // Discard WHILE
+                let condition = self.expression().wrap_err("in while condition")?;
+                let body = Box::new(self.statement().wrap_err("in while body")?);
+                Statement::While { condition, body }
             }
 
             _ => {
