@@ -169,7 +169,7 @@ impl Display for LiteralValue<'_> {
     }
 }
 
-#[derive(Clone, Display, Debug, PartialEq)]
+#[derive(Copy, Clone, Display, Debug, PartialEq)]
 pub enum UnaryOp {
     #[display("-")]
     Negate,
@@ -195,7 +195,7 @@ impl TryFrom<TokenKind> for UnaryOp {
     }
 }
 
-#[derive(Clone, Display, Debug, PartialEq)]
+#[derive(Copy, Clone, Display, Debug, PartialEq)]
 pub enum BinaryOp {
     #[display("or")]
     Or,
