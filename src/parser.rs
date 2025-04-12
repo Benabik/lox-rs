@@ -657,11 +657,12 @@ impl<'de> Parser<'de> {
                         }
                         self.lexer.next(); // discard RIGHT_PAREN
 
-                        return Ok(Expression::Call {
+                        lhs = Expression::Call {
                             callee: Box::new(lhs),
                             arguments: arguments.into(),
                             origin,
-                        });
+                        };
+                        continue;
                     }
 
                     if token.kind == TokenKind::EQUAL {
