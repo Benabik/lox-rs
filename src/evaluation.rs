@@ -16,14 +16,20 @@ pub enum Value {
     String(String),
 }
 
-impl From<LiteralValue<'_>> for Value {
-    fn from(value: LiteralValue<'_>) -> Self {
+impl From<&LiteralValue<'_>> for Value {
+    fn from(value: &LiteralValue<'_>) -> Self {
         match value {
-            LiteralValue::Number(val) => Value::Number(val),
+            LiteralValue::Number(val) => Value::Number(*val),
             LiteralValue::String(val) => Value::String(val.to_string()),
-            LiteralValue::Boolean(val) => Value::Boolean(val),
+            LiteralValue::Boolean(val) => Value::Boolean(*val),
             LiteralValue::Nil => Value::Nil,
         }
+    }
+}
+
+impl From<LiteralValue<'_>> for Value {
+    fn from(value: LiteralValue<'_>) -> Self {
+        Value::from(&value)
     }
 }
 
@@ -31,10 +37,10 @@ impl From<&Value> for bool {
     fn from(value: &Value) -> Self {
         // Lox uses truthyness, not strictly typed booleans
         match value {
-            &Value::Nil => false,
-            &Value::Boolean(value) => value,
-            &Value::Number(_) => true,
-            &Value::String(_) => true,
+            Value::Nil => false,
+            Value::Boolean(value) => *value,
+            Value::Number(_) => true,
+            Value::String(_) => true,
         }
     }
 }
@@ -142,9 +148,9 @@ pub struct Evaluator {
 }
 
 impl Evaluator {
-    pub fn block(&mut self, prog: Block) -> miette::Result<()> {
+    pub fn block(&mut self, prog: &Block) -> miette::Result<()> {
         self.scopes.push(Default::default());
-        for d in prog.0 {
+        for d in &prog.0 {
             use parser::Declaration::*;
             match d {
                 Declaration(name, expr) => {
@@ -174,7 +180,7 @@ impl Evaluator {
             .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
     }
 
-    pub fn statement(&mut self, stmt: Statement) -> miette::Result<()> {
+    pub fn statement(&mut self, stmt: &Statement) -> miette::Result<()> {
         use parser::Statement::*;
         match stmt {
             Block(block) => self.block(block)?,
@@ -189,10 +195,10 @@ impl Evaluator {
                 let s = if self.expression(condition)?.into() {
                     Some(then)
                 } else {
-                    other
+                    other.as_ref()
                 };
                 if let Some(s) = s {
-                    self.statement(*s)?;
+                    self.statement(s)?;
                 }
             }
             Print(e) => println!("{}", self.expression(e)?),
@@ -200,7 +206,7 @@ impl Evaluator {
         Ok(())
     }
 
-    pub fn expression(&mut self, expr: Expression) -> miette::Result<Value> {
+    pub fn expression(&mut self, expr: &Expression) -> miette::Result<Value> {
         let to_float = |val: Value, origin: &SourceLoc| f64::try_from(val).with_source_loc(origin);
         let to_string =
             |val: Value, origin: &SourceLoc| String::try_from(val).with_source_loc(origin);
@@ -208,17 +214,17 @@ impl Evaluator {
         let val =
             match expr {
                 Expression::Literal { value, .. } => value.into(),
-                Expression::Grouping { expr, .. } => return self.expression(*expr),
+                Expression::Grouping { expr, .. } => return self.expression(expr),
                 Expression::Unary { op, expr, origin } => {
-                    let value = self.expression(*expr)?;
+                    let value = self.expression(expr)?;
                     match op {
-                        parser::UnaryOp::Negate => (-to_float(value, &origin)?).into(),
+                        parser::UnaryOp::Negate => (-to_float(value, origin)?).into(),
                         parser::UnaryOp::Not => (!bool::from(value)).into(),
                     }
                 }
                 Expression::Assign { name, expr, origin } => {
-                    let value = self.expression(*expr)?;
-                    let var = self.lookup(name, &origin)?;
+                    let value = self.expression(expr)?;
+                    let var = self.lookup(name, origin)?;
                     *var = value.clone();
                     value
                 }
@@ -228,7 +234,7 @@ impl Evaluator {
                     rhs,
                     origin,
                 } => {
-                    let lhs = self.expression(*lhs)?;
+                    let lhs = self.expression(lhs)?;
 
                     // Evaluate logical ops before RHS for short-circuiting
                     if matches!(op, Or | And) {
@@ -236,15 +242,15 @@ impl Evaluator {
                         return Ok(match (truth, op) {
                             (true, Or) => lhs,
                             (false, And) => lhs,
-                            _ => self.expression(*rhs)?,
+                            _ => self.expression(rhs)?,
                         });
                     }
 
-                    let rhs = self.expression(*rhs)?;
+                    let rhs = self.expression(rhs)?;
 
                     let binary_float = |lhs, rhs, f: fn(f64, f64) -> f64| {
-                        let lhs = to_float(lhs, &origin)?;
-                        let rhs = to_float(rhs, &origin)?;
+                        let lhs = to_float(lhs, origin)?;
+                        let rhs = to_float(rhs, origin)?;
                         Ok::<Value, miette::Report>(f(lhs, rhs).into())
                     };
 
@@ -255,7 +261,7 @@ impl Evaluator {
                         NotEqual => Value::from(lhs != rhs),
                         Less | LessEqual | Greater | GreaterEqual => match lhs {
                             Value::Number(lhs) => {
-                                let rhs = to_float(rhs, &origin)?;
+                                let rhs = to_float(rhs, origin)?;
                                 match op {
                                     Less => lhs < rhs,
                                     LessEqual => lhs <= rhs,
@@ -266,7 +272,7 @@ impl Evaluator {
                                 .into()
                             }
                             Value::String(lhs) => {
-                                let rhs = to_string(rhs, &origin)?;
+                                let rhs = to_string(rhs, origin)?;
                                 match op {
                                     Less => lhs < rhs,
                                     LessEqual => lhs <= rhs,
@@ -278,18 +284,18 @@ impl Evaluator {
                             }
                             _ => {
                                 return Err(TypeError::new("number or string", lhs)
-                                    .with_source_loc(&origin))
+                                    .with_source_loc(origin))
                             }
                         },
                         Plus => match lhs {
-                            Value::Number(lhs) => (lhs + to_float(rhs, &origin)?).into(),
+                            Value::Number(lhs) => (lhs + to_float(rhs, origin)?).into(),
                             Value::String(mut lhs) => {
-                                lhs += &to_string(rhs, &origin)?;
+                                lhs += &to_string(rhs, origin)?;
                                 lhs.into()
                             }
                             _ => {
                                 return Err(TypeError::new("number or string", lhs)
-                                    .with_source_loc(&origin))
+                                    .with_source_loc(origin))
                             }
                         },
                         Minus => binary_float(lhs, rhs, |x, y| x - y)?,
@@ -298,7 +304,7 @@ impl Evaluator {
                     }
                 }
 
-                Expression::Variable { name, origin } => self.lookup(name, &origin)?.clone(),
+                Expression::Variable { name, origin } => self.lookup(name, origin)?.clone(),
             };
 
         Ok(val)

@@ -81,7 +81,7 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            match evaluator.expression(expr) {
+            match evaluator.expression(&expr) {
                 Ok(val) => println!("{val}"),
                 Err(e) => {
                     eprintln!("{e:?}");
@@ -103,7 +103,7 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            if let Err(e) = evaluator.block(prog) {
+            if let Err(e) = evaluator.block(&prog) {
                 eprintln!("{e:?}");
                 std::process::exit(70);
             }
