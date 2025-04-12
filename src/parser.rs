@@ -23,7 +23,6 @@ impl Display for Block<'_> {
 pub enum Declaration<'de> {
     Declaration(&'de str, Option<Expression<'de>>),
     Statement(Statement<'de>),
-    Block(Block<'de>),
 }
 
 impl Display for Declaration<'_> {
@@ -37,7 +36,6 @@ impl Display for Declaration<'_> {
                 write!(f, ")")
             }
             Declaration::Statement(expr) => expr.fmt(f),
-            Declaration::Block(block) => block.fmt(f),
         }
     }
 }
@@ -51,6 +49,7 @@ pub struct If<'de> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement<'de> {
+    Block(Block<'de>),
     Expression(Expression<'de>),
     If(Box<If<'de>>),
     Print(Expression<'de>),
@@ -59,6 +58,7 @@ pub enum Statement<'de> {
 impl Display for Statement<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Statement::Block(block) => block.fmt(f),
             Statement::Expression(e) => e.fmt(f),
             Statement::If(iffy) => {
                 let If {
@@ -396,16 +396,6 @@ impl<'de> Parser<'de> {
                 Declaration::Declaration(var.text, expr)
             }
 
-            Some(TokenKind::LEFT_BRACE) => {
-                self.lexer.next(); // Discard {
-                let mut block = Vec::new();
-                while !self.peek_for(TokenKind::RIGHT_BRACE) {
-                    block.push(self.declaration().wrap_err("in block")?);
-                }
-                self.expect(TokenKind::RIGHT_BRACE).wrap_err("in block")?;
-                Declaration::Block(Block(block))
-            }
-
             _ => Declaration::Statement(self.statement().wrap_err("in declaration")?),
         };
         Ok(ret)
@@ -430,6 +420,16 @@ impl<'de> Parser<'de> {
                     then,
                     other,
                 }))
+            }
+
+            Some(TokenKind::LEFT_BRACE) => {
+                self.lexer.next(); // Discard {
+                let mut block = Vec::new();
+                while !self.peek_for(TokenKind::RIGHT_BRACE) {
+                    block.push(self.declaration().wrap_err("in block")?);
+                }
+                self.expect(TokenKind::RIGHT_BRACE).wrap_err("in block")?;
+                Statement::Block(Block(block))
             }
 
             Some(TokenKind::PRINT) => {

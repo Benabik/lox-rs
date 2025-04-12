@@ -154,7 +154,6 @@ impl Evaluator {
                 }
 
                 Statement(s) => self.statement(s)?,
-                Block(block) => self.block(block)?,
             }
         }
         self.scopes.pop();
@@ -172,6 +171,7 @@ impl Evaluator {
     pub fn statement(&mut self, stmt: Statement) -> miette::Result<()> {
         use parser::Statement::*;
         match stmt {
+            Block(block) => self.block(block)?,
             Expression(e) => {
                 self.expression(e)?;
             }
