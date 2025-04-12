@@ -40,18 +40,15 @@ impl Display for Declaration<'_> {
     }
 }
 
-#[derive(Clone, Debug, From, PartialEq)]
-pub struct If<'de> {
-    pub condition: Expression<'de>,
-    pub then: Statement<'de>,
-    pub other: Option<Statement<'de>>,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement<'de> {
     Block(Block<'de>),
     Expression(Expression<'de>),
-    If(Box<If<'de>>),
+    If {
+        condition: Expression<'de>,
+        then: Box<Statement<'de>>,
+        other: Option<Box<Statement<'de>>>,
+    },
     Print(Expression<'de>),
 }
 
@@ -60,12 +57,11 @@ impl Display for Statement<'_> {
         match self {
             Statement::Block(block) => block.fmt(f),
             Statement::Expression(e) => e.fmt(f),
-            Statement::If(iffy) => {
-                let If {
-                    condition,
-                    then,
-                    other,
-                } = &**iffy;
+            Statement::If {
+                condition,
+                then,
+                other,
+            } => {
                 write!(f, "(if {condition} {then}")?;
                 if let Some(other) = other {
                     write!(f, " {other}")?;
@@ -416,18 +412,21 @@ impl<'de> Parser<'de> {
                 self.expect(TokenKind::LEFT_PAREN)?;
                 let condition = self.expression().wrap_err("in if condition")?;
                 self.expect(TokenKind::RIGHT_PAREN)?;
+
+                // Delay placing in Box until after all parsing complete
                 let then = self.statement().wrap_err("in if statement")?;
+
                 let other = if self.peek_for(TokenKind::ELSE) {
                     self.lexer.next(); // Discard ELSE
-                    Some(self.statement().wrap_err("in else statement")?)
+                    Some(Box::new(self.statement().wrap_err("in else statement")?))
                 } else {
                     None
                 };
-                Statement::If(Box::new(If {
+                Statement::If {
                     condition,
-                    then,
+                    then: Box::new(then),
                     other,
-                }))
+                }
             }
 
             Some(TokenKind::LEFT_BRACE) => {
