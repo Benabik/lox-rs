@@ -8,5 +8,7 @@ rust-version = "1.80"
 [dependencies]
 clap = { version = "4.5.16", features = ["derive"] }
 derive_more = { version = "1.0.0", features = ["display", "from"] }
+env_logger = { version = "0.11.8", default-features = false, features = ["auto-color"] }
+log = "0.4.27"
 miette = { version = "7.2.0", features = ["fancy"] }
 thiserror = "1.0.63"
