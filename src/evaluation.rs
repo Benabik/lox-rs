@@ -21,6 +21,11 @@ pub enum Value<'de> {
         arity: usize,
         body: fn(&[Value<'de>]) -> miette::Result<Value<'de>>,
     },
+    #[display("{name}")]
+    Class {
+        name: &'de str,
+        methods: Vec<Function<'de>>,
+    },
     #[display("<fn {name}>")]
     Closure {
         name: &'de str,
@@ -56,6 +61,7 @@ impl From<&Value<'_>> for bool {
             Value::Nil => false,
             Value::Builtin { .. } => true,
             Value::Boolean(value) => *value,
+            Value::Class { .. } => true,
             Value::Closure { .. } => true,
             Value::Number(_) => true,
             Value::String(_) => true,
@@ -290,6 +296,14 @@ impl<'de> Interpreter<'de> {
     pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
         for d in &prog.0 {
             match d {
+                Declaration::Class { name, methods } => self.scope.define(
+                    name,
+                    Value::Class {
+                        name,
+                        methods: methods.clone(),
+                    },
+                ),
+
                 Declaration::Function(f) => self.function(f),
 
                 Declaration::Variable(name, expr) => {

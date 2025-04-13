@@ -47,6 +47,10 @@ impl Display for Function<'_> {
 
 #[derive(Clone, Debug, From, PartialEq)]
 pub enum Declaration<'de> {
+    Class {
+        name: &'de str,
+        methods: Vec<Function<'de>>,
+    },
     #[from]
     Function(Function<'de>),
     #[from(forward)]
@@ -57,6 +61,11 @@ pub enum Declaration<'de> {
 impl Display for Declaration<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Declaration::Class { name, methods } => {
+                write!(f, "(class {name}")?;
+                methods.iter().try_for_each(|m| m.fmt(f))?;
+                write!(f, ")")
+            }
             Declaration::Function(func) => func.fmt(f),
             Declaration::Variable(name, expr) => {
                 write!(f, "(var {}", name)?;
@@ -507,6 +516,22 @@ impl<'de> Parser<'de> {
 
     pub fn declaration(&mut self) -> miette::Result<Declaration<'de>> {
         let ret = match self.peek_kind() {
+            Some(TokenKind::CLASS) => {
+                self.lexer.next(); // Discard CLASS
+                let Token { text, .. } = self.expect(TokenKind::IDENTIFIER)?;
+                self.expect(TokenKind::LEFT_BRACE)?;
+
+                let mut methods = Vec::new();
+                while !self.peek_for(TokenKind::RIGHT_BRACE) {
+                    methods.push(self.function()?);
+                }
+                self.lexer.next(); // Discard RIGHT_BRACE
+
+                Declaration::Class {
+                    name: text,
+                    methods,
+                }
+            }
             Some(TokenKind::FUN) => {
                 self.lexer.next(); // Discard FUN
                 Declaration::Function(self.function()?)
