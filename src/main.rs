@@ -39,6 +39,16 @@ fn read_file(filename: &PathBuf) -> miette::Result<String> {
         .wrap_err_with(|| format!("reading '{}' failed", filename.display()))
 }
 
+fn unwrap_or_exit<T, E: std::fmt::Debug>(value: Result<T, E>, code: i32) -> T {
+    match value {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error:?}");
+            std::process::exit(code);
+        }
+    }
+}
+
 fn main() -> miette::Result<()> {
     env_logger::init();
 
@@ -70,45 +80,25 @@ fn main() -> miette::Result<()> {
     match args.command {
         Commands::Tokenize { .. } => unreachable!("exited earlier"),
         Commands::Evaluate { .. } | Commands::Parse { .. } => {
-            let expr = match parser.expression() {
-                Ok(expr) => expr,
-                Err(e) => {
-                    eprintln!("{e:?}");
-                    std::process::exit(65);
-                }
-            };
+            let expr = unwrap_or_exit(parser.expression(), 65);
 
             if matches!(args.command, Commands::Parse { .. }) {
                 println!("{expr}");
                 std::process::exit(0);
             }
 
-            match interpreter.run_expression(&expr) {
-                Ok(val) => println!("{val}"),
-                Err(e) => {
-                    eprintln!("{e:?}");
-                    std::process::exit(70);
-                }
-            }
+            let val = unwrap_or_exit(interpreter.run_expression(&expr), 70);
+            println!("{val}");
         }
         Commands::Program { .. } | Commands::Run { .. } => {
-            let prog = match parser.program() {
-                Ok(prog) => prog,
-                Err(e) => {
-                    eprintln!("{e:?}");
-                    std::process::exit(65);
-                }
-            };
+            let prog = unwrap_or_exit(parser.program(), 65);
 
             if matches!(args.command, Commands::Program { .. }) {
                 println!("{prog}");
                 std::process::exit(0);
             }
 
-            if let Err(e) = interpreter.run_block(&prog) {
-                eprintln!("{e:?}");
-                std::process::exit(70);
-            }
+            unwrap_or_exit(interpreter.run_block(&prog), 70);
         }
     }
 
