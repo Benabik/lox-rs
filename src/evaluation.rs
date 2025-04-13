@@ -32,9 +32,9 @@ pub enum Value<'de> {
     },
     Number(f64),
     #[display("{} instance", class.name)]
-    #[from(ignore)]
     Object {
         class: Rc<Class<'de>>,
+        properties: HashMap<&'de str, Pointer<'de>>,
     },
     String(String),
 }
@@ -189,6 +189,28 @@ pub struct UndefinedVariableError {
 }
 
 impl UndefinedVariableError {
+    fn new<T: ToString>(name: T, origin: &SourceLoc) -> Self {
+        Self {
+            name: name.to_string(),
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+
+#[derive(Diagnostic, Debug, Error)]
+#[error("Undefined property '{name}'.")]
+pub struct UndefinedPropertyError {
+    name: String,
+
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl UndefinedPropertyError {
     fn new<T: ToString>(name: T, origin: &SourceLoc) -> Self {
         Self {
             name: name.to_string(),
@@ -415,6 +437,20 @@ impl<'de> Interpreter<'de> {
                 let value = self.expression(expr)?;
                 self.scope.assign(name, value, origin)?
             }
+            Expression::AssignProp {
+                object,
+                name,
+                expr,
+                origin,
+            } => {
+                let object = self.expression(object)?;
+                let Value::Object { properties, .. } = &mut *object.borrow_mut() else {
+                    return Err(TypeError::new("object", object).with_source_loc(origin));
+                };
+                let value = self.expression(expr)?;
+                properties.insert(name, value.clone());
+                value
+            }
             Expression::Call {
                 callee,
                 arguments,
@@ -448,6 +484,7 @@ impl<'de> Interpreter<'de> {
                     }
                     Value::Class(class) => Value::Object {
                         class: class.clone(),
+                        properties: Default::default(),
                     }
                     .into(),
                     Value::Closure {
@@ -468,6 +505,22 @@ impl<'de> Interpreter<'de> {
                     _ => unreachable!("type matched above"),
                 }
             }
+
+            Expression::Property {
+                object,
+                name,
+                origin,
+            } => {
+                let object = self.expression(object)?;
+                let Value::Object { properties, .. } = &*object.borrow() else {
+                    return Err(TypeError::new("object", object).with_source_loc(origin));
+                };
+                properties
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| UndefinedPropertyError::new(name, origin))?
+            }
+
             Expression::Binary {
                 op,
                 lhs,

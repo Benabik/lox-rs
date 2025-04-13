@@ -186,10 +186,25 @@ pub enum Expression<'de> {
         origin: SourceLoc<'de>,
     },
 
+    #[display("(assign-prop {object} {name} {expr})")]
+    AssignProp {
+        object: Box<Expression<'de>>,
+        name: &'de str,
+        expr: Box<Expression<'de>>,
+        origin: SourceLoc<'de>,
+    },
+
     #[display("(call {callee}{arguments})")]
     Call {
         callee: Box<Expression<'de>>,
         arguments: Arguments<'de>,
+        origin: SourceLoc<'de>,
+    },
+
+    #[display("(prop {object} {name})")]
+    Property {
+        object: Box<Expression<'de>>,
+        name: &'de str,
         origin: SourceLoc<'de>,
     },
 }
@@ -203,7 +218,9 @@ impl<'de> Expression<'de> {
             Expression::Grouping { origin, .. } => origin,
             Expression::Variable { origin, .. } => origin,
             Expression::Assign { origin, .. } => origin,
+            Expression::AssignProp { origin, .. } => origin,
             Expression::Call { origin, .. } => origin,
+            Expression::Property { origin, .. } => origin,
         }
     }
 }
@@ -255,7 +272,7 @@ pub enum UnaryOp {
 impl UnaryOp {
     pub fn prefix_binding_power(&self) -> u8 {
         13 // One more than BinaryOp::Divide
-           // Call goes here
+           // Property/Call goes here
     }
 }
 
@@ -732,8 +749,20 @@ impl<'de> Parser<'de> {
             match self.peek_kind() {
                 None => break,
 
+                Some(TokenKind::DOT) => {
+                    // Highest binding power, no check
+                    self.lexer.next(); // Discard DOT
+                    let Token { text, origin, .. } = self.expect(TokenKind::IDENTIFIER)?;
+                    lhs = Expression::Property {
+                        object: Box::new(lhs),
+                        name: text,
+                        origin,
+                    };
+                    continue;
+                }
+
                 Some(TokenKind::LEFT_PAREN) => {
-                    // Call binding is tighter than anything else, so no check needed
+                    // Highest binding power, no check
                     let Token { origin, .. } =
                         self.lexer.next().expect("peeked Some").expect("peeked Ok");
 
@@ -768,15 +797,21 @@ impl<'de> Parser<'de> {
                     let Token { origin, .. } =
                         self.lexer.next().expect("peeked Some").expect("peeked Ok");
 
-                    let Expression::Variable { name, .. } = lhs else {
-                        return Err(InvalidAssignmentError::new(&origin).into());
-                    };
+                    let expr = Box::new(self.expression_bp(r_bp)?);
 
-                    let expr = self.expression_bp(r_bp)?;
-                    lhs = Expression::Assign {
-                        name,
-                        expr: Box::new(expr),
-                        origin,
+                    lhs = match lhs {
+                        // Lift a property read to a property write
+                        Expression::Property { object, name, .. } => Expression::AssignProp {
+                            object,
+                            name,
+                            expr,
+                            origin,
+                        },
+
+                        Expression::Variable { name, .. } => {
+                            Expression::Assign { name, expr, origin }
+                        }
+                        _ => return Err(InvalidAssignmentError::new(&origin).into()),
                     };
 
                     continue;
