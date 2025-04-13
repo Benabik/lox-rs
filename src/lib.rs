@@ -4,7 +4,8 @@ pub use lex::Lexer;
 pub mod parser;
 pub use parser::Parser;
 
-mod analyzer;
+pub mod analyzer;
+pub use analyzer::Analyzer;
 
 pub mod evaluation;
 pub use evaluation::Interpreter;

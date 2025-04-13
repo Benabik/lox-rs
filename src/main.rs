@@ -75,7 +75,6 @@ fn main() -> miette::Result<()> {
     }
 
     let mut parser = imp::Parser::new(&mut lexer);
-    let mut interpreter = imp::Interpreter::default();
 
     match args.command {
         Commands::Tokenize { .. } => unreachable!("exited earlier"),
@@ -87,7 +86,8 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            let val = unwrap_or_exit(interpreter.run_expression(&expr), 70);
+            let analysis = unwrap_or_exit(imp::Analyzer::new_expression(&expr), 65);
+            let val = unwrap_or_exit(imp::Interpreter::new(analysis).expression(&expr), 70);
             println!("{val}");
         }
         Commands::Program { .. } | Commands::Run { .. } => {
@@ -98,7 +98,8 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            unwrap_or_exit(interpreter.run_block(&prog), 70);
+            let analysis = unwrap_or_exit(imp::Analyzer::new_block(&prog), 65);
+            unwrap_or_exit(imp::Interpreter::new(analysis).block(&prog), 70);
         }
     }
 

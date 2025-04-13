@@ -361,15 +361,32 @@ impl PartialEq for Environment<'_> {
 pub struct Interpreter<'de> {
     globals: Environment<'de>,
     scope: Environment<'de>,
-    analysis: Option<Analyzer<'de>>,
+    analysis: Analyzer<'de>,
 }
 
 impl<'de> Interpreter<'de> {
-    fn depth_for(&self, origin: &SourceLoc<'de>) -> Option<usize> {
-        self.analysis
-            .as_ref()
-            .expect("anaylsis done")
-            .depth_for(origin)
+    pub fn new(analysis: Analyzer<'de>) -> Self {
+        let mut globals = Environment::default();
+
+        globals.define(
+            "clock",
+            Value::Builtin {
+                name: "clock",
+                arity: 0,
+                body: |_| {
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64().into())
+                        .into_diagnostic()
+                },
+            },
+        );
+
+        Interpreter {
+            scope: globals.clone(),
+            globals,
+            analysis,
+        }
     }
 
     fn function(&mut self, function: &Function<'de>) -> Closure<'de> {
@@ -386,12 +403,7 @@ impl<'de> Interpreter<'de> {
         }
     }
 
-    pub fn run_block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Pointer<'de>>> {
-        self.analysis.replace(Analyzer::new_block(prog)?);
-        self.block(prog)
-    }
-
-    fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Pointer<'de>>> {
+    pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Pointer<'de>>> {
         for d in &prog.0 {
             match d {
                 Declaration::Class { name, methods } => {
@@ -468,13 +480,8 @@ impl<'de> Interpreter<'de> {
         Ok(ret)
     }
 
-    pub fn run_expression(&mut self, expr: &Expression<'de>) -> miette::Result<Pointer<'de>> {
-        self.analysis.replace(Analyzer::new_expression(expr)?);
-        self.expression(expr)
-    }
-
     fn get(&self, name: &'de str, origin: &SourceLoc<'de>) -> miette::Result<Pointer<'de>> {
-        let environment = if let Some(depth) = self.depth_for(origin) {
+        let environment = if let Some(depth) = self.analysis.depth_for(origin) {
             debug!("Getting {name} {depth}/{}", self.scope.depth());
             &self.scope.ancestor(depth)
         } else {
@@ -491,7 +498,7 @@ impl<'de> Interpreter<'de> {
         origin: &SourceLoc<'de>,
     ) -> miette::Result<Pointer<'de>> {
         let value = value.into();
-        let environment = if let Some(depth) = self.depth_for(origin) {
+        let environment = if let Some(depth) = self.analysis.depth_for(origin) {
             debug!("Getting {name} {depth}/{}", self.scope.depth());
             &mut self.scope.ancestor(depth)
         } else {
@@ -501,7 +508,7 @@ impl<'de> Interpreter<'de> {
         environment.assign(name, value, origin)
     }
 
-    fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Pointer<'de>> {
+    pub fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Pointer<'de>> {
         let to_float =
             |val: Pointer, origin: &SourceLoc| f64::try_from(&val).with_source_loc(origin);
 
@@ -701,31 +708,5 @@ impl<'de> Interpreter<'de> {
         };
 
         Ok(val)
-    }
-}
-
-impl Default for Interpreter<'_> {
-    fn default() -> Self {
-        let mut globals = Environment::default();
-
-        globals.define(
-            "clock",
-            Value::Builtin {
-                name: "clock",
-                arity: 0,
-                body: |_| {
-                    SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map(|d| d.as_secs_f64().into())
-                        .into_diagnostic()
-                },
-            },
-        );
-
-        Interpreter {
-            scope: globals.clone(),
-            globals,
-            analysis: None,
-        }
     }
 }
