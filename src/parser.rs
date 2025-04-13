@@ -199,6 +199,9 @@ pub enum Expression<'de> {
         name: &'de str,
         origin: SourceLoc<'de>,
     },
+
+    #[display("this")]
+    This(SourceLoc<'de>),
 }
 
 impl<'de> Expression<'de> {
@@ -213,6 +216,7 @@ impl<'de> Expression<'de> {
             Expression::AssignProp { origin, .. } => origin,
             Expression::Call { origin, .. } => origin,
             Expression::Property { origin, .. } => origin,
+            Expression::This(origin) => origin,
         }
     }
 }
@@ -720,6 +724,7 @@ impl<'de> Parser<'de> {
                 }
             }
             TokenKind::IDENTIFIER => Expression::Variable { name: text, origin },
+            TokenKind::THIS => Expression::This(origin),
             _ => {
                 if let Ok(op) = UnaryOp::try_from(kind) {
                     let expr = self.expression_bp(op.prefix_binding_power())?;

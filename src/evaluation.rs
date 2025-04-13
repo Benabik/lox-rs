@@ -18,11 +18,22 @@ pub struct Closure<'de> {
     pub environment: Environment<'de>,
 }
 
+impl<'de> Closure<'de> {
+    pub fn bind(&self, object: impl Into<Pointer<'de>>) -> Self {
+        let mut environment = self.environment.push();
+        environment.define("this", object);
+        Self {
+            environment,
+            ..self.clone()
+        }
+    }
+}
+
 #[derive(Clone, Debug, Display, PartialEq)]
 #[display("{name}")]
 pub struct Class<'de> {
     pub name: &'de str,
-    pub methods: HashMap<&'de str, Pointer<'de>>,
+    pub methods: HashMap<&'de str, Closure<'de>>,
 }
 
 #[derive(Clone, Default, Debug, Display, From, PartialEq)]
@@ -360,7 +371,7 @@ impl<'de> Interpreter<'de> {
         for d in &prog.0 {
             match d {
                 Declaration::Class { name, methods } => {
-                    let methods = methods.iter().map(|f| (f.name, self.function(f).into())).collect();
+                    let methods = methods.iter().map(|f| (f.name, self.function(f))).collect();
                     self.scope.define(name, Class { name, methods });
                 }
                 Declaration::Function(f) => {
@@ -524,13 +535,21 @@ impl<'de> Interpreter<'de> {
                 origin,
             } => {
                 let object = self.expression(object)?;
-                let Value::Object { class, properties, .. } = &*object.borrow() else {
+                let Value::Object {
+                    class, properties, ..
+                } = &*object.borrow()
+                else {
                     return Err(TypeError::new("object", object).with_source_loc(origin));
                 };
                 properties
                     .get(name)
-                    .or_else(|| class.methods.get(name))
                     .cloned()
+                    .or_else(|| {
+                        class
+                            .methods
+                            .get(name)
+                            .map(|c| c.bind(object.clone()).into())
+                    })
                     .ok_or_else(|| UndefinedPropertyError::new(name, origin))?
             }
 
@@ -617,6 +636,7 @@ impl<'de> Interpreter<'de> {
             }
 
             Expression::Variable { name, origin } => self.scope.get(name, origin)?,
+            Expression::This(origin) => self.scope.get("this", origin)?,
         };
 
         Ok(val)
