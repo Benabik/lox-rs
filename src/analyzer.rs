@@ -84,17 +84,23 @@ impl<'de> Analyzer<'de> {
     }
 
     pub fn block(&mut self, block: &Block<'de>) -> miette::Result<()> {
+        // Pre-define all function names to allow mutual recursion
+        for s in block.0.iter() {
+            if let Declaration::Function { name, .. } = s {
+                self.define_variable(name)
+            }
+        }
         block.0.iter().try_for_each(|s| self.declaration(s))
     }
 
     fn declaration(&mut self, decl: &Declaration<'de>) -> miette::Result<()> {
         match decl {
             Declaration::Function {
-                name,
                 arguments,
                 body,
+                ..
             } => {
-                self.define_variable(name);
+                // NB: Function names are pre-defined in a block pass
                 self.enter_scope();
                 for arg in arguments {
                     self.define_variable(arg);
