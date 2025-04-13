@@ -45,12 +45,24 @@ impl Display for Function<'_> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Class<'de> {
+    pub name: &'de str,
+    pub methods: Vec<Function<'de>>,
+}
+
+impl Display for Class<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(class {}", self.name)?;
+        self.methods.iter().try_for_each(|m| m.fmt(f))?;
+        write!(f, ")")
+    }
+}
+
 #[derive(Clone, Debug, From, PartialEq)]
 pub enum Declaration<'de> {
-    Class {
-        name: &'de str,
-        methods: Vec<Function<'de>>,
-    },
+    #[from]
+    Class(Class<'de>),
     #[from]
     Function(Function<'de>),
     #[from(forward)]
@@ -61,11 +73,7 @@ pub enum Declaration<'de> {
 impl Display for Declaration<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Declaration::Class { name, methods } => {
-                write!(f, "(class {name}")?;
-                methods.iter().try_for_each(|m| m.fmt(f))?;
-                write!(f, ")")
-            }
+            Declaration::Class(c) => c.fmt(f),
             Declaration::Function(func) => func.fmt(f),
             Declaration::Variable(name, expr) => {
                 write!(f, "(var {}", name)?;
@@ -527,10 +535,10 @@ impl<'de> Parser<'de> {
                 }
                 self.lexer.next(); // Discard RIGHT_BRACE
 
-                Declaration::Class {
+                Class {
                     name: text,
                     methods,
-                }
+                }.into()
             }
             Some(TokenKind::FUN) => {
                 self.lexer.next(); // Discard FUN

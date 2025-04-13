@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::SystemTime;
 
-use crate::parser::{Block, Declaration, Expression, Function, LiteralValue, Statement};
+use crate::parser::{Block, Class, Declaration, Expression, Function, LiteralValue, Statement};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
 use miette::{Diagnostic, IntoDiagnostic, SourceSpan};
@@ -21,11 +21,8 @@ pub enum Value<'de> {
         arity: usize,
         body: fn(&[Value<'de>]) -> miette::Result<Value<'de>>,
     },
-    #[display("{name}")]
-    Class {
-        name: &'de str,
-        methods: Vec<Function<'de>>,
-    },
+    #[display("{}", _0.name)]
+    Class(Rc<Class<'de>>),
     #[display("<fn {name}>")]
     Closure {
         name: &'de str,
@@ -34,7 +31,18 @@ pub enum Value<'de> {
         environment: Environment<'de>,
     },
     Number(f64),
+    #[display("{} instance", class.name)]
+    #[from(ignore)]
+    Object {
+        class: Rc<Class<'de>>,
+    },
     String(String),
+}
+
+impl<'de> From<Class<'de>> for Value<'de> {
+    fn from(value: Class<'de>) -> Self {
+        Self::Class(Rc::new(value))
+    }
 }
 
 impl<'a> From<&LiteralValue<'a>> for Value<'_> {
@@ -61,9 +69,10 @@ impl From<&Value<'_>> for bool {
             Value::Nil => false,
             Value::Builtin { .. } => true,
             Value::Boolean(value) => *value,
-            Value::Class { .. } => true,
+            Value::Class(_) => true,
             Value::Closure { .. } => true,
             Value::Number(_) => true,
+            Value::Object { .. } => true,
             Value::String(_) => true,
         }
     }
@@ -296,14 +305,7 @@ impl<'de> Interpreter<'de> {
     pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
         for d in &prog.0 {
             match d {
-                Declaration::Class { name, methods } => self.scope.define(
-                    name,
-                    Value::Class {
-                        name,
-                        methods: methods.clone(),
-                    },
-                ),
-
+                Declaration::Class(c) => self.scope.define(c.name, c.clone().into()),
                 Declaration::Function(f) => self.function(f),
 
                 Declaration::Variable(name, expr) => {
@@ -397,6 +399,7 @@ impl<'de> Interpreter<'de> {
 
                 let arity = match &callee {
                     Value::Builtin { arity, .. } => *arity,
+                    Value::Class { .. } => 0,
                     Value::Closure { arguments, .. } => arguments.len(),
                     _ => {
                         return Err(TypeError::new("function", callee).with_source_loc(origin));
@@ -416,6 +419,9 @@ impl<'de> Interpreter<'de> {
                 match callee {
                     Value::Builtin { body, .. } => {
                         return body(&arguments);
+                    }
+                    Value::Class(class) => {
+                        Value::Object { class: class.clone() }
                     }
                     Value::Closure {
                         body,
