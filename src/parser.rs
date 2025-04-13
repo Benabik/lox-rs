@@ -729,86 +729,78 @@ impl<'de> Parser<'de> {
         };
 
         loop {
-            match self.lexer.peek() {
+            match self.peek_kind() {
                 None => break,
-                Some(Err(_)) => {
-                    return Err(self
-                        .lexer
-                        .next()
-                        .expect("checked some in match")
-                        .expect_err("check error in match"))
-                    .wrap_err("expecting operator of expression");
+
+                Some(TokenKind::LEFT_PAREN) => {
+                    // Call binding is tighter than anything else, so no check needed
+                    let Token { origin, .. } =
+                        self.lexer.next().expect("peeked Some").expect("peeked Ok");
+
+                    let mut arguments = Vec::new();
+                    while !self.peek_for(TokenKind::RIGHT_PAREN) {
+                        arguments.push(self.expression_bp(0)?);
+
+                        if self.peek_for(TokenKind::COMMA) {
+                            self.lexer.next(); // discard COMMA
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::RIGHT_PAREN)
+                        .wrap_err("in function call")?;
+
+                    lhs = Expression::Call {
+                        callee: Box::new(lhs),
+                        arguments: arguments.into(),
+                        origin,
+                    };
+                    continue;
                 }
-                Some(Ok(token)) => {
-                    if token.kind == TokenKind::LEFT_PAREN {
-                        // Call binding is tighter than anything else, so no check needed
-                        let Token { origin, .. } =
-                            self.lexer.next().expect("peeked Some").expect("peeked Ok");
 
-                        let mut arguments = Vec::new();
-                        while !self.peek_for(TokenKind::RIGHT_PAREN) {
-                            arguments.push(self.expression_bp(0)?);
-
-                            if self.peek_for(TokenKind::COMMA) {
-                                self.lexer.next(); // discard COMMA
-                            } else {
-                                break;
-                            }
-                        }
-                        self.expect(TokenKind::RIGHT_PAREN)
-                            .wrap_err("in function call")?;
-
-                        lhs = Expression::Call {
-                            callee: Box::new(lhs),
-                            arguments: arguments.into(),
-                            origin,
-                        };
-                        continue;
+                Some(TokenKind::EQUAL) => {
+                    // Assignment binding_power
+                    let (l_bp, r_bp) = (2, 1);
+                    if l_bp < min_bp {
+                        break;
                     }
 
-                    if token.kind == TokenKind::EQUAL {
-                        // Assignment binding_power
-                        let (l_bp, r_bp) = (2, 1);
-                        if l_bp < min_bp {
-                            break;
-                        }
+                    let Token { origin, .. } =
+                        self.lexer.next().expect("peeked Some").expect("peeked Ok");
 
-                        let Token { origin, .. } =
-                            self.lexer.next().expect("peeked Some").expect("peeked Ok");
+                    let Expression::Variable { name, .. } = lhs else {
+                        return Err(InvalidAssignmentError::new(&origin).into());
+                    };
 
-                        let Expression::Variable { name, .. } = lhs else {
-                            return Err(InvalidAssignmentError::new(&origin).into());
-                        };
+                    let expr = self.expression_bp(r_bp)?;
+                    lhs = Expression::Assign {
+                        name,
+                        expr: Box::new(expr),
+                        origin,
+                    };
 
-                        let expr = self.expression_bp(r_bp)?;
-                        lhs = Expression::Assign {
-                            name,
-                            expr: Box::new(expr),
-                            origin,
-                        };
+                    continue;
+                }
 
-                        continue;
+                Some(kind) => {
+                    let Ok(op) = BinaryOp::try_from(kind) else {
+                        break;
+                    };
+                    let (l_bp, r_bp) = op.binding_power();
+                    if l_bp < min_bp {
+                        break;
                     }
+                    let Token { origin, .. } =
+                        self.lexer.next().expect("peeked Some").expect("peeked Ok");
 
-                    if let Ok(op) = BinaryOp::try_from(token.kind) {
-                        let (l_bp, r_bp) = op.binding_power();
-                        if l_bp < min_bp {
-                            break;
-                        }
-                        let Token { origin, .. } =
-                            self.lexer.next().expect("peeked Some").expect("peeked Ok");
-
-                        let rhs = self.expression_bp(r_bp)?;
-                        lhs = Expression::Binary {
-                            op,
-                            lhs: Box::new(lhs),
-                            rhs: Box::new(rhs),
-                            origin,
-                        };
-                        continue;
-                    }
-
-                    break;
+                    let rhs = self.expression_bp(r_bp)?;
+                    lhs = Expression::Binary {
+                        op,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                        origin,
+                    };
+                    continue;
                 }
             }
         }
