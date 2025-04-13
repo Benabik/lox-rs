@@ -1,4 +1,4 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::SystemTime;
@@ -19,7 +19,7 @@ pub enum Value<'de> {
     Builtin {
         name: &'static str,
         arity: usize,
-        body: fn(&[Value<'de>]) -> miette::Result<Value<'de>>,
+        body: fn(&[Pointer<'de>]) -> miette::Result<Pointer<'de>>,
     },
     #[display("{}", _0.name)]
     Class(Rc<Class<'de>>),
@@ -62,10 +62,50 @@ impl<'a> From<LiteralValue<'a>> for Value<'_> {
     }
 }
 
-impl From<&Value<'_>> for bool {
-    fn from(value: &Value) -> Self {
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Pointer<'de>(Rc<RefCell<Value<'de>>>);
+
+impl<'de> Pointer<'de> {
+    pub fn borrow(&self) -> Ref<'_, Value<'de>> {
+        self.0.borrow()
+    }
+
+    pub fn borrow_mut(&self) -> RefMut<'_, Value<'de>> {
+        self.0.borrow_mut()
+    }
+
+    pub fn try_into_str(&self) -> Result<Ref<'_, str>, TypeError> {
+        let value = self.borrow();
+        Ref::filter_map(value, |value| match value {
+            Value::String(s) => Some(&s[..]),
+            _ => None,
+        })
+        .map_err(|value| TypeError::new("string", value))
+    }
+}
+
+impl Display for Pointer<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.borrow().fmt(f)
+    }
+}
+
+impl<'de, T: Into<Value<'de>>> From<T> for Pointer<'de> {
+    fn from(value: T) -> Self {
+        Self(Rc::new(RefCell::new(value.into())))
+    }
+}
+
+impl From<Pointer<'_>> for bool {
+    fn from(value: Pointer<'_>) -> Self {
+        Self::from(&value)
+    }
+}
+
+impl From<&Pointer<'_>> for bool {
+    fn from(value: &Pointer) -> Self {
         // Lox uses truthyness, not strictly typed booleans
-        match value {
+        match &*value.borrow() {
             Value::Nil => false,
             Value::Builtin { .. } => true,
             Value::Boolean(value) => *value,
@@ -78,41 +118,26 @@ impl From<&Value<'_>> for bool {
     }
 }
 
-impl From<Value<'_>> for bool {
-    fn from(value: Value) -> Self {
-        bool::from(&value)
-    }
-}
-
-impl TryFrom<Value<'_>> for f64 {
+impl TryFrom<&Pointer<'_>> for f64 {
     type Error = TypeError;
 
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        match value {
-            Value::Number(value) => Ok(value),
+    fn try_from(value: &Pointer) -> Result<Self, Self::Error> {
+        let value = value.borrow();
+        match &*value {
+            Value::Number(value) => Ok(*value),
             _ => Err(TypeError::new("number", value)),
         }
     }
 }
 
-impl TryFrom<Value<'_>> for String {
+impl TryFrom<&Pointer<'_>> for String {
     type Error = TypeError;
 
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        match value {
-            Value::String(value) => Ok(value),
+    fn try_from(value: &Pointer) -> Result<Self, Self::Error> {
+        let value = value.borrow();
+        match &*value {
+            Value::String(value) => Ok(value.clone()),
             _ => Err(TypeError::new("string", value)),
-        }
-    }
-}
-
-impl<'a> TryFrom<&'a Value<'_>> for &'a str {
-    type Error = TypeError;
-
-    fn try_from(value: &'a Value) -> Result<Self, Self::Error> {
-        match value {
-            Value::String(value) => Ok(value),
-            _ => Err(TypeError::new("string", value.clone())),
         }
     }
 }
@@ -131,7 +156,7 @@ pub struct TypeError {
 }
 
 impl TypeError {
-    pub fn new(expected: &'static str, value: Value) -> Self {
+    pub fn new(expected: &'static str, value: impl ToString) -> Self {
         TypeError {
             expected,
             value: value.to_string(),
@@ -210,7 +235,7 @@ impl WithSourceLoc for BadArityError {
 #[derive(Clone, Default, Debug)]
 struct Frame<'de> {
     parent: Option<Environment<'de>>,
-    values: HashMap<&'de str, Value<'de>>,
+    values: HashMap<&'de str, Pointer<'de>>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -232,7 +257,7 @@ impl<'de> Environment<'de> {
         (*self.0).borrow().parent.clone()
     }
 
-    fn get(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<Value<'de>> {
+    fn get(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<Pointer<'de>> {
         let (values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
             (&mut frame.values, &mut frame.parent)
         });
@@ -250,9 +275,10 @@ impl<'de> Environment<'de> {
     fn assign(
         &mut self,
         name: &str,
-        value: Value<'de>,
+        value: impl Into<Pointer<'de>>,
         origin: &SourceLoc,
-    ) -> miette::Result<Value<'de>> {
+    ) -> miette::Result<Pointer<'de>> {
+        let value = value.into();
         let (mut values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
             (&mut frame.values, &mut frame.parent)
         });
@@ -268,8 +294,8 @@ impl<'de> Environment<'de> {
         }
     }
 
-    fn define(&mut self, name: &'de str, value: Value<'de>) {
-        self.0.borrow_mut().values.insert(name, value);
+    fn define(&mut self, name: &'de str, value: impl Into<Pointer<'de>>) {
+        self.0.borrow_mut().values.insert(name, value.into());
     }
 }
 
@@ -302,17 +328,17 @@ impl<'de> Interpreter<'de> {
         );
     }
 
-    pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
+    pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Pointer<'de>>> {
         for d in &prog.0 {
             match d {
-                Declaration::Class(c) => self.scope.define(c.name, c.clone().into()),
+                Declaration::Class(c) => self.scope.define(c.name, Rc::new(c.clone())),
                 Declaration::Function(f) => self.function(f),
 
                 Declaration::Variable(name, expr) => {
                     let value = if let Some(expr) = expr {
                         self.expression(expr)?
                     } else {
-                        Value::Nil
+                        Default::default()
                     };
                     self.scope.define(name, value);
                 }
@@ -328,7 +354,7 @@ impl<'de> Interpreter<'de> {
         Ok(None)
     }
 
-    pub fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<Option<Value<'de>>> {
+    pub fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<Option<Pointer<'de>>> {
         use parser::Statement::*;
         let ret = match stmt {
             Block(block) => {
@@ -358,7 +384,7 @@ impl<'de> Interpreter<'de> {
                 None
             }
             Return(Some(e)) => Some(self.expression(e)?),
-            Return(None) => Some(Value::Nil),
+            Return(None) => Some(Default::default()),
             While { condition, body } => {
                 while self.expression(condition)?.into() {
                     if let Some(value) = self.statement(body)? {
@@ -371,10 +397,9 @@ impl<'de> Interpreter<'de> {
         Ok(ret)
     }
 
-    pub fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Value<'de>> {
-        let to_float = |val: Value, origin: &SourceLoc| f64::try_from(val).with_source_loc(origin);
-        let to_string =
-            |val: Value, origin: &SourceLoc| String::try_from(val).with_source_loc(origin);
+    pub fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Pointer<'de>> {
+        let to_float =
+            |val: Pointer, origin: &SourceLoc| f64::try_from(&val).with_source_loc(origin);
 
         let val = match expr {
             Expression::Literal { value, .. } => value.into(),
@@ -397,12 +422,12 @@ impl<'de> Interpreter<'de> {
             } => {
                 let callee = self.expression(callee)?;
 
-                let arity = match &callee {
+                let arity = match &*callee.borrow() {
                     Value::Builtin { arity, .. } => *arity,
                     Value::Class { .. } => 0,
                     Value::Closure { arguments, .. } => arguments.len(),
                     _ => {
-                        return Err(TypeError::new("function", callee).with_source_loc(origin));
+                        return Err(TypeError::new("function", &callee).with_source_loc(origin));
                     }
                 };
 
@@ -416,13 +441,15 @@ impl<'de> Interpreter<'de> {
                     .map(|a| self.expression(a))
                     .collect::<Result<Vec<_>, _>>()?;
 
-                match callee {
+                let callee = callee.borrow();
+                match &*callee {
                     Value::Builtin { body, .. } => {
                         return body(&arguments);
                     }
-                    Value::Class(class) => {
-                        Value::Object { class: class.clone() }
+                    Value::Class(class) => Value::Object {
+                        class: class.clone(),
                     }
+                    .into(),
                     Value::Closure {
                         body,
                         arguments: names,
@@ -434,7 +461,7 @@ impl<'de> Interpreter<'de> {
                         for (name, value) in names.iter().zip(arguments) {
                             self.scope.define(name, value);
                         }
-                        let ret = self.block(&body)?;
+                        let ret = self.block(body)?;
                         self.scope = outer;
                         ret.unwrap_or_default()
                     }
@@ -464,16 +491,17 @@ impl<'de> Interpreter<'de> {
                 let binary_float = |lhs, rhs, f: fn(f64, f64) -> f64| {
                     let lhs = to_float(lhs, origin)?;
                     let rhs = to_float(rhs, origin)?;
-                    Ok::<Value, miette::Report>(f(lhs, rhs).into())
+                    Ok::<Pointer, miette::Report>(f(lhs, rhs).into())
                 };
 
                 use parser::BinaryOp::*;
                 match op {
                     Or | And => unreachable!("matched above"),
-                    Equal => Value::from(lhs == rhs),
-                    NotEqual => Value::from(lhs != rhs),
-                    Less | LessEqual | Greater | GreaterEqual => match lhs {
+                    Equal => Pointer::from(lhs == rhs),
+                    NotEqual => Pointer::from(lhs != rhs),
+                    Less | LessEqual | Greater | GreaterEqual => match &*lhs.borrow() {
                         Value::Number(lhs) => {
+                            let lhs = *lhs;
                             let rhs = to_float(rhs, origin)?;
                             match op {
                                 Less => lhs < rhs,
@@ -485,7 +513,8 @@ impl<'de> Interpreter<'de> {
                             .into()
                         }
                         Value::String(lhs) => {
-                            let rhs = to_string(rhs, origin)?;
+                            let lhs = &lhs[..];
+                            let rhs = &*rhs.try_into_str().with_source_loc(origin)?;
                             match op {
                                 Less => lhs < rhs,
                                 LessEqual => lhs <= rhs,
@@ -497,19 +526,21 @@ impl<'de> Interpreter<'de> {
                         }
                         _ => {
                             return Err(
-                                TypeError::new("number or string", lhs).with_source_loc(origin)
+                                TypeError::new("number or string", &lhs).with_source_loc(origin)
                             )
                         }
                     },
-                    Plus => match lhs {
+                    Plus => match &*lhs.borrow() {
                         Value::Number(lhs) => (lhs + to_float(rhs, origin)?).into(),
-                        Value::String(mut lhs) => {
-                            lhs += &to_string(rhs, origin)?;
+                        Value::String(lhs) => {
+                            let mut lhs = lhs.clone();
+                            let rhs = &*rhs.try_into_str().with_source_loc(origin)?;
+                            lhs += rhs;
                             lhs.into()
                         }
                         _ => {
                             return Err(
-                                TypeError::new("number or string", lhs).with_source_loc(origin)
+                                TypeError::new("number or string", &lhs).with_source_loc(origin)
                             )
                         }
                     },

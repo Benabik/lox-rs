@@ -538,7 +538,8 @@ impl<'de> Parser<'de> {
                 Class {
                     name: text,
                     methods,
-                }.into()
+                }
+                .into()
             }
             Some(TokenKind::FUN) => {
                 self.lexer.next(); // Discard FUN
