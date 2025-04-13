@@ -4,6 +4,8 @@ pub use lex::Lexer;
 pub mod parser;
 pub use parser::Parser;
 
+mod analyzer;
+
 pub mod evaluation;
 pub use evaluation::Interpreter;
 
@@ -17,6 +19,14 @@ pub struct SourceLoc<'de> {
     pub source: &'de str,
     pub offset: usize,
     pub len: usize,
+}
+
+impl SourceLoc<'_> {
+    pub fn position(&self) -> (usize, usize) {
+        let source = &self.source[0..self.offset];
+        let (i, line) = source.lines().enumerate().last().unwrap_or((0, source));
+        (i + 1, line.len() + 1)
+    }
 }
 
 impl From<SourceLoc<'_>> for miette::SourceSpan {

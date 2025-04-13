@@ -34,7 +34,11 @@ pub enum Declaration<'de> {
 impl Display for Declaration<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Declaration::Function { name, arguments, body } => {
+            Declaration::Function {
+                name,
+                arguments,
+                body,
+            } => {
                 write!(f, "(fun {name} (")?;
                 let mut iter = arguments.iter();
                 if let Some(first) = iter.next() {
@@ -469,9 +473,12 @@ impl<'de> Parser<'de> {
                     .wrap_err("in var declaration")?;
 
                 let mut arguments = Vec::new();
-                self.expect(TokenKind::LEFT_PAREN).wrap_err("in function declaration")?;
+                self.expect(TokenKind::LEFT_PAREN)
+                    .wrap_err("in function declaration")?;
                 while !self.peek_for(TokenKind::RIGHT_PAREN) {
-                    let arg = self.expect(TokenKind::IDENTIFIER).wrap_err("in function declaration")?;
+                    let arg = self
+                        .expect(TokenKind::IDENTIFIER)
+                        .wrap_err("in function declaration")?;
                     arguments.push(arg.text);
 
                     if self.peek_for(TokenKind::COMMA) {
@@ -480,7 +487,8 @@ impl<'de> Parser<'de> {
                         break;
                     }
                 }
-                self.expect(TokenKind::RIGHT_PAREN).wrap_err("in function declaration")?;
+                self.expect(TokenKind::RIGHT_PAREN)
+                    .wrap_err("in function declaration")?;
 
                 let body = self.block().wrap_err("in function declaration")?;
                 Declaration::Function {
@@ -699,7 +707,8 @@ impl<'de> Parser<'de> {
                                 break;
                             }
                         }
-                        self.expect(TokenKind::RIGHT_PAREN).wrap_err("in function call")?;
+                        self.expect(TokenKind::RIGHT_PAREN)
+                            .wrap_err("in function call")?;
 
                         lhs = Expression::Call {
                             callee: Box::new(lhs),

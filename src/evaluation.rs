@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 use crate::parser::{Block, Expression, LiteralValue, Statement};
-use crate::{parser, SourceLoc, WithSourceLoc};
+use crate::{analyzer::Analyzer, parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
 use miette::{Diagnostic, IntoDiagnostic, SourceSpan};
 use thiserror::Error;
@@ -137,28 +137,6 @@ impl WithSourceLoc for TypeError {
 }
 
 #[derive(Diagnostic, Debug, Error)]
-#[error("Undefined variable '{name}'.")]
-pub struct UndefinedVariableError {
-    name: String,
-
-    #[label("here")]
-    span: SourceSpan,
-
-    #[source_code]
-    src: String,
-}
-
-impl UndefinedVariableError {
-    fn new<T: ToString>(name: T, origin: &SourceLoc) -> Self {
-        Self {
-            name: name.to_string(),
-            span: origin.into(),
-            src: origin.source.to_string(),
-        }
-    }
-}
-
-#[derive(Diagnostic, Debug, Error)]
 #[error("Wrong number of arguments, expected {expected}, got {got}")]
 pub struct BadArityError {
     expected: usize,
@@ -209,6 +187,15 @@ impl<'de> Environment<'de> {
         })))
     }
 
+    fn depth(&self) -> usize {
+        self.0
+            .borrow()
+            .parent
+            .as_ref()
+            .map(|parent| parent.depth() + 1)
+            .unwrap_or(1)
+    }
+
     fn push(&self) -> Self {
         Self::new(self.clone())
     }
@@ -217,40 +204,58 @@ impl<'de> Environment<'de> {
         (*self.0).borrow().parent.clone()
     }
 
-    fn get(&mut self, name: &str, origin: &SourceLoc) -> miette::Result<Value<'de>> {
+    fn missing_variable(&self, name: &str, depth: usize, origin: &SourceLoc) -> ! {
+        let (line, col) = origin.position();
+        panic!(
+            "Missing variable {name} {depth}/{} at {line}:{col}",
+            self.depth()
+        );
+    }
+
+    fn get_impl(&mut self, name: &str, depth: usize) -> Option<Value<'de>> {
         let (values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
             (&mut frame.values, &mut frame.parent)
         });
-        if let Some(value) = values.get(name) {
-            Ok(value.clone())
+        if depth == 0 {
+            values.get(name).cloned()
         } else {
             parent
                 .as_mut()
-                .map(|parent| parent.get(name, origin))
-                .transpose()?
-                .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
+                .and_then(|parent| parent.get_impl(name, depth - 1))
+        }
+    }
+
+    fn get(&mut self, name: &str, depth: usize, origin: &SourceLoc) -> miette::Result<Value<'de>> {
+        self.get_impl(name, depth)
+            .ok_or_else(|| self.missing_variable(name, depth, origin))
+    }
+
+    fn assign_impl(&mut self, name: &str, depth: usize, value: Value<'de>) -> Option<Value<'de>> {
+        let (mut values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
+            (&mut frame.values, &mut frame.parent)
+        });
+
+        if depth == 0 {
+            values.get_mut(name).map(|v| {
+                *v = value.clone();
+                value
+            })
+        } else {
+            parent
+                .as_mut()
+                .and_then(|parent| parent.assign_impl(name, depth - 1, value))
         }
     }
 
     fn assign(
         &mut self,
         name: &str,
+        depth: usize,
         value: Value<'de>,
         origin: &SourceLoc,
     ) -> miette::Result<Value<'de>> {
-        let (mut values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
-            (&mut frame.values, &mut frame.parent)
-        });
-        if let Some(v) = values.get_mut(name) {
-            *v = value.clone();
-            Ok(value)
-        } else {
-            parent
-                .as_mut()
-                .map(|parent| parent.assign(name, value, origin))
-                .transpose()?
-                .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
-        }
+        self.assign_impl(name, depth, value)
+            .ok_or_else(|| self.missing_variable(name, depth, origin))
     }
 
     fn define(&mut self, name: &'de str, value: Value<'de>) {
@@ -267,10 +272,27 @@ impl PartialEq for Environment<'_> {
 #[derive(Clone, Debug)]
 pub struct Interpreter<'de> {
     scope: Environment<'de>,
+    analysis: Option<Analyzer<'de>>,
 }
 
 impl<'de> Interpreter<'de> {
-    pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
+    fn depth_for(&self, name: &'de str, origin: &SourceLoc<'de>) -> usize {
+        self.analysis
+            .as_ref()
+            .expect("anaylsis done")
+            .depth_for(origin)
+            .unwrap_or_else(|| {
+                let (line, col) = origin.position();
+                panic!("Unanalyzed variable {name} at {line}:{col}");
+            })
+    }
+
+    pub fn run_block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
+        self.analysis.replace(Analyzer::new_block(prog)?);
+        self.block(prog)
+    }
+
+    fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
         for d in &prog.0 {
             use parser::Declaration::*;
             match d {
@@ -310,7 +332,7 @@ impl<'de> Interpreter<'de> {
         Ok(None)
     }
 
-    pub fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<Option<Value<'de>>> {
+    fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<Option<Value<'de>>> {
         use parser::Statement::*;
         let ret = match stmt {
             Block(block) => {
@@ -353,7 +375,12 @@ impl<'de> Interpreter<'de> {
         Ok(ret)
     }
 
-    pub fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Value<'de>> {
+    pub fn run_expression(&mut self, expr: &Expression<'de>) -> miette::Result<Value<'de>> {
+        self.analysis.replace(Analyzer::new_expression(expr)?);
+        self.expression(expr)
+    }
+
+    fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Value<'de>> {
         let to_float = |val: Value, origin: &SourceLoc| f64::try_from(val).with_source_loc(origin);
         let to_string =
             |val: Value, origin: &SourceLoc| String::try_from(val).with_source_loc(origin);
@@ -370,7 +397,8 @@ impl<'de> Interpreter<'de> {
             }
             Expression::Assign { name, expr, origin } => {
                 let value = self.expression(expr)?;
-                self.scope.assign(name, value, origin)?
+                let depth = self.depth_for(name, origin);
+                self.scope.assign(name, depth, value, origin)?
             }
             Expression::Call {
                 callee,
@@ -497,7 +525,9 @@ impl<'de> Interpreter<'de> {
                 }
             }
 
-            Expression::Variable { name, origin } => self.scope.get(name, origin)?,
+            Expression::Variable { name, origin } => {
+                self.scope.get(name, self.depth_for(name, origin), origin)?
+            }
         };
 
         Ok(val)
@@ -523,7 +553,8 @@ impl Default for Interpreter<'_> {
         );
 
         Interpreter {
-            scope: globals.push(),
+            scope: globals,
+            analysis: None,
         }
     }
 }

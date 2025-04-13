@@ -81,7 +81,7 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            match interpreter.expression(&expr) {
+            match interpreter.run_expression(&expr) {
                 Ok(val) => println!("{val}"),
                 Err(e) => {
                     eprintln!("{e:?}");
@@ -103,7 +103,7 @@ fn main() -> miette::Result<()> {
                 std::process::exit(0);
             }
 
-            if let Err(e) = interpreter.block(&prog) {
+            if let Err(e) = interpreter.run_block(&prog) {
                 eprintln!("{e:?}");
                 std::process::exit(70);
             }
