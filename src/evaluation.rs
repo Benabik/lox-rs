@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::SystemTime;
 
-use crate::parser::{Block, Class, Declaration, Expression, Function, LiteralValue, Statement};
+use crate::parser::{Block, Declaration, Expression, Function, LiteralValue, Statement};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
 use miette::{Diagnostic, IntoDiagnostic, SourceSpan};
@@ -18,6 +18,13 @@ pub struct Closure<'de> {
     pub environment: Environment<'de>,
 }
 
+#[derive(Clone, Debug, Display, PartialEq)]
+#[display("{name}")]
+pub struct Class<'de> {
+    pub name: &'de str,
+    pub methods: HashMap<&'de str, Pointer<'de>>,
+}
+
 #[derive(Clone, Default, Debug, Display, From, PartialEq)]
 pub enum Value<'de> {
     #[display("nil")]
@@ -30,7 +37,6 @@ pub enum Value<'de> {
         arity: usize,
         body: fn(&[Pointer<'de>]) -> miette::Result<Pointer<'de>>,
     },
-    #[display("{}", _0.name)]
     Class(Rc<Class<'de>>),
     Closure(Closure<'de>),
     Number(f64),
@@ -336,28 +342,31 @@ pub struct Interpreter<'de> {
 }
 
 impl<'de> Interpreter<'de> {
-    fn function(&mut self, function: &Function<'de>) {
+    fn function(&mut self, function: &Function<'de>) -> Closure<'de> {
         let Function {
             name,
             arguments,
             body,
         } = function;
-        self.scope.define(
+        Closure {
             name,
-            Closure {
-                name,
-                arguments: arguments.clone(),
-                body: body.clone(),
-                environment: self.scope.clone(),
-            },
-        );
+            arguments: arguments.clone(),
+            body: body.clone(),
+            environment: self.scope.clone(),
+        }
     }
 
     pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Pointer<'de>>> {
         for d in &prog.0 {
             match d {
-                Declaration::Class(c) => self.scope.define(c.name, Rc::new(c.clone())),
-                Declaration::Function(f) => self.function(f),
+                Declaration::Class { name, methods } => {
+                    let methods = methods.iter().map(|f| (f.name, self.function(f).into())).collect();
+                    self.scope.define(name, Class { name, methods });
+                }
+                Declaration::Function(f) => {
+                    let f = self.function(f);
+                    self.scope.define(f.name, f);
+                }
 
                 Declaration::Variable(name, expr) => {
                     let value = if let Some(expr) = expr {
@@ -515,11 +524,12 @@ impl<'de> Interpreter<'de> {
                 origin,
             } => {
                 let object = self.expression(object)?;
-                let Value::Object { properties, .. } = &*object.borrow() else {
+                let Value::Object { class, properties, .. } = &*object.borrow() else {
                     return Err(TypeError::new("object", object).with_source_loc(origin));
                 };
                 properties
                     .get(name)
+                    .or_else(|| class.methods.get(name))
                     .cloned()
                     .ok_or_else(|| UndefinedPropertyError::new(name, origin))?
             }
