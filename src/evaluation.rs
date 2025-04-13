@@ -9,6 +9,15 @@ use derive_more::{Display, From};
 use miette::{Diagnostic, IntoDiagnostic, SourceSpan};
 use thiserror::Error;
 
+#[derive(Clone, Debug, Display, From, PartialEq)]
+#[display("<fn {name}>")]
+pub struct Closure<'de> {
+    pub name: &'de str,
+    pub arguments: Vec<&'de str>,
+    pub body: Block<'de>,
+    pub environment: Environment<'de>,
+}
+
 #[derive(Clone, Default, Debug, Display, From, PartialEq)]
 pub enum Value<'de> {
     #[display("nil")]
@@ -23,13 +32,7 @@ pub enum Value<'de> {
     },
     #[display("{}", _0.name)]
     Class(Rc<Class<'de>>),
-    #[display("<fn {name}>")]
-    Closure {
-        name: &'de str,
-        arguments: Vec<&'de str>,
-        body: Block<'de>,
-        environment: Environment<'de>,
-    },
+    Closure(Closure<'de>),
     Number(f64),
     #[display("{} instance", class.name)]
     Object {
@@ -341,7 +344,7 @@ impl<'de> Interpreter<'de> {
         } = function;
         self.scope.define(
             name,
-            Value::Closure {
+            Closure {
                 name,
                 arguments: arguments.clone(),
                 body: body.clone(),
@@ -461,7 +464,7 @@ impl<'de> Interpreter<'de> {
                 let arity = match &*callee.borrow() {
                     Value::Builtin { arity, .. } => *arity,
                     Value::Class { .. } => 0,
-                    Value::Closure { arguments, .. } => arguments.len(),
+                    Value::Closure(Closure { arguments, .. }) => arguments.len(),
                     _ => {
                         return Err(TypeError::new("function", &callee).with_source_loc(origin));
                     }
@@ -487,12 +490,12 @@ impl<'de> Interpreter<'de> {
                         properties: Default::default(),
                     }
                     .into(),
-                    Value::Closure {
+                    Value::Closure(Closure {
                         body,
                         arguments: names,
                         environment: parent,
                         ..
-                    } => {
+                    }) => {
                         let outer = self.scope.clone();
                         self.scope = parent.push();
                         for (name, value) in names.iter().zip(arguments) {
