@@ -1,35 +1,11 @@
 use std::collections::HashMap;
 
 use log::{debug, info};
-use miette::{Diagnostic, SourceSpan};
-use thiserror::Error;
 
 use crate::{
     parser::{Block, Declaration, Expression, Function, Statement},
     SourceLoc,
 };
-
-#[derive(Diagnostic, Debug, Error)]
-#[error("Undefined variable '{name}'.")]
-pub struct UndefinedVariableError {
-    name: String,
-
-    #[label("here")]
-    span: SourceSpan,
-
-    #[source_code]
-    src: String,
-}
-
-impl UndefinedVariableError {
-    pub(crate) fn new<T: ToString>(name: T, origin: &SourceLoc) -> Self {
-        Self {
-            name: name.to_string(),
-            span: origin.into(),
-            src: origin.source.to_string(),
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct Analyzer<'de> {
@@ -150,8 +126,8 @@ impl<'de> Analyzer<'de> {
         }
     }
 
-    fn resolve_variable(&mut self, name: &str, origin: &SourceLoc<'de>) -> miette::Result<()> {
-        let depth = self
+    fn resolve_variable(&mut self, name: &str, origin: &SourceLoc<'de>) {
+        let Some(depth) = self
             .scopes
             .iter()
             .rev()
@@ -159,23 +135,28 @@ impl<'de> Analyzer<'de> {
             .find_map(|(depth, scope)| Some(depth).filter(|_| scope.contains_key(name)))
             .inspect(|depth| {
                 info!("resolved {name} at {depth}/{}", self.depth());
-            })
-            .ok_or_else(|| UndefinedVariableError::new(name, origin))?;
+            }) else {
+                // Failure to resolve falls back to global lookup
+                info!("resolved {name} as global");
+                return;
+            };
         if self.depths.insert(origin.clone(), depth).is_some() {
             let (line, col) = origin.position();
             panic!("Revisiting {name} at {line}:{col}");
         }
-        Ok(())
     }
 
     pub fn expression(&mut self, expression: &Expression<'de>) -> miette::Result<()> {
         match expression {
             // Variables and assignment need depth updated
-            Expression::Variable { name, origin } => self.resolve_variable(name, origin),
+            Expression::Variable { name, origin } => {
+                self.resolve_variable(name, origin);
+                Ok(())
+            },
             Expression::This(_) => todo!(),
 
             Expression::Assign { name, expr, origin } => {
-                self.resolve_variable(name, origin)?;
+                self.resolve_variable(name, origin);
                 self.expression(expr)
             }
             Expression::AssignProp { .. } => todo!(),

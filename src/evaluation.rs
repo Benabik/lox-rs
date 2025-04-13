@@ -55,7 +55,7 @@ pub enum Value<'de> {
     #[display("{} instance", class.name)]
     Object {
         class: Rc<Class<'de>>,
-        properties: HashMap<&'de str, Pointer<'de>>,
+        properties: PointerMap<'de>,
     },
     String(String),
 }
@@ -163,6 +163,8 @@ impl TryFrom<&Pointer<'_>> for String {
     }
 }
 
+type PointerMap<'de> = HashMap<&'de str, Pointer<'de>>;
+
 #[derive(Diagnostic, Debug, Error)]
 #[error("Type Error, expected {expected}, got {value}")]
 pub struct TypeError {
@@ -194,6 +196,28 @@ impl WithSourceLoc for TypeError {
         self.src = Some(loc.source.to_string());
         self.span = Some(loc.into());
         self.into()
+    }
+}
+
+#[derive(Diagnostic, Debug, Error)]
+#[error("Undefined variable '{name}'.")]
+pub struct UndefinedVariableError {
+    name: String,
+
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl UndefinedVariableError {
+    fn new<T: ToString>(name: T, origin: &SourceLoc) -> Self {
+        Self {
+            name: name.to_string(),
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
     }
 }
 
@@ -256,7 +280,7 @@ impl WithSourceLoc for BadArityError {
 #[derive(Clone, Default, Debug)]
 struct Frame<'de> {
     parent: Option<Environment<'de>>,
-    values: HashMap<&'de str, Pointer<'de>>,
+    values: PointerMap<'de>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -287,79 +311,37 @@ impl<'de> Environment<'de> {
         (*self.0).borrow().parent.clone()
     }
 
-    fn missing_variable(&self, name: &str, depth: usize, origin: &SourceLoc) -> ! {
-        let (line, col) = origin.position();
-        panic!(
-            "Missing variable {name} {depth}/{} at {line}:{col}",
-            self.depth()
-        );
+    fn ancestor(&self, depth: usize) -> Environment<'de> {
+        std::iter::repeat(())
+            .take(depth)
+            .try_fold(self.clone(), |env, ()| env.0.borrow().parent.clone())
+            .expect("Ran out of scopes")
     }
 
-    fn get_impl(&mut self, name: &str, depth: usize) -> Option<Pointer<'de>> {
-        let (values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
-            (&mut frame.values, &mut frame.parent)
-        });
-        if depth == 0 {
-            values.get(name).cloned()
-        } else {
-            match parent.as_mut() {
-                Some(parent) => parent.get_impl(name, depth - 1),
-                None => {
-                    error!("Ran out of scopes");
-                    None
-                }
-            }
-        }
-    }
-
-    fn get(
-        &mut self,
-        name: &str,
-        depth: usize,
-        origin: &SourceLoc,
-    ) -> miette::Result<Pointer<'de>> {
-        debug!("Getting {name} {depth}/{}", self.depth());
-        self.get_impl(name, depth)
-            .ok_or_else(|| self.missing_variable(name, depth, origin))
-    }
-
-    fn assign_impl(
-        &mut self,
-        name: &str,
-        depth: usize,
-        value: Pointer<'de>,
-    ) -> Option<Pointer<'de>> {
-        let (mut values, mut parent) = RefMut::map_split(self.0.borrow_mut(), |frame| {
-            (&mut frame.values, &mut frame.parent)
-        });
-
-        if depth == 0 {
-            values.get_mut(name).map(|v| {
-                *v = value.clone();
-                value
-            })
-        } else {
-            match parent.as_mut() {
-                Some(parent) => parent.assign_impl(name, depth - 1, value),
-                None => {
-                    error!("Ran out of scopes");
-                    None
-                }
-            }
-        }
+    fn get(&self, name: &str, origin: &SourceLoc) -> miette::Result<Pointer<'de>> {
+        let frame = self.0.borrow();
+        frame
+            .values
+            .get(name)
+            .cloned()
+            .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
     }
 
     fn assign(
         &mut self,
         name: &str,
-        depth: usize,
-        value: impl Into<Pointer<'de>>,
+        value: Pointer<'de>,
         origin: &SourceLoc,
     ) -> miette::Result<Pointer<'de>> {
-        let value = value.into();
-        debug!("Assigning {name} {depth}/{}: {value}", self.depth());
-        self.assign_impl(name, depth, value)
-            .ok_or_else(|| self.missing_variable(name, depth, origin))
+        let mut frame = self.0.borrow_mut();
+        frame
+            .values
+            .get_mut(name)
+            .map(|v| {
+                *v = value.clone();
+                value
+            })
+            .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
     }
 
     fn define(&mut self, name: &'de str, value: impl Into<Pointer<'de>>) {
@@ -377,20 +359,17 @@ impl PartialEq for Environment<'_> {
 
 #[derive(Clone, Debug)]
 pub struct Interpreter<'de> {
+    globals: Environment<'de>,
     scope: Environment<'de>,
     analysis: Option<Analyzer<'de>>,
 }
 
 impl<'de> Interpreter<'de> {
-    fn depth_for(&self, name: &'de str, origin: &SourceLoc<'de>) -> usize {
+    fn depth_for(&self, origin: &SourceLoc<'de>) -> Option<usize> {
         self.analysis
             .as_ref()
             .expect("anaylsis done")
             .depth_for(origin)
-            .unwrap_or_else(|| {
-                let (line, col) = origin.position();
-                panic!("Unanalyzed variable {name} at {line}:{col}");
-            })
     }
 
     fn function(&mut self, function: &Function<'de>) -> Closure<'de> {
@@ -494,6 +473,34 @@ impl<'de> Interpreter<'de> {
         self.expression(expr)
     }
 
+    fn get(&self, name: &'de str, origin: &SourceLoc<'de>) -> miette::Result<Pointer<'de>> {
+        let environment = if let Some(depth) = self.depth_for(origin) {
+            debug!("Getting {name} {depth}/{}", self.scope.depth());
+            &self.scope.ancestor(depth)
+        } else {
+            debug!("Getting global {name}");
+            &self.globals
+        };
+        environment.get(name, origin)
+    }
+
+    fn assign(
+        &mut self,
+        name: &'de str,
+        value: impl Into<Pointer<'de>>,
+        origin: &SourceLoc<'de>,
+    ) -> miette::Result<Pointer<'de>> {
+        let value = value.into();
+        let environment = if let Some(depth) = self.depth_for(origin) {
+            debug!("Getting {name} {depth}/{}", self.scope.depth());
+            &mut self.scope.ancestor(depth)
+        } else {
+            debug!("Getting global {name}");
+            &mut self.globals
+        };
+        environment.assign(name, value, origin)
+    }
+
     fn expression(&mut self, expr: &Expression<'de>) -> miette::Result<Pointer<'de>> {
         let to_float =
             |val: Pointer, origin: &SourceLoc| f64::try_from(&val).with_source_loc(origin);
@@ -510,8 +517,7 @@ impl<'de> Interpreter<'de> {
             }
             Expression::Assign { name, expr, origin } => {
                 let value = self.expression(expr)?;
-                let depth = self.depth_for(name, origin);
-                self.scope.assign(name, depth, value, origin)?
+                self.assign(name, value, origin)?
             }
             Expression::AssignProp {
                 object,
@@ -690,13 +696,8 @@ impl<'de> Interpreter<'de> {
                 }
             }
 
-            Expression::Variable { name, origin } => {
-                self.scope.get(name, self.depth_for(name, origin), origin)?
-            }
-            Expression::This(origin) => {
-                self.scope
-                    .get("this", self.depth_for("this", origin), origin)?
-            }
+            Expression::Variable { name, origin } => self.get(name, origin)?,
+            Expression::This(origin) => self.get("this", origin)?,
         };
 
         Ok(val)
@@ -722,7 +723,8 @@ impl Default for Interpreter<'_> {
         );
 
         Interpreter {
-            scope: globals,
+            scope: globals.clone(),
+            globals,
             analysis: None,
         }
     }
