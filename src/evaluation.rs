@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::SystemTime;
 
-use crate::parser::{Block, Expression, LiteralValue, Statement};
+use crate::parser::{Block, Declaration, Expression, Function, LiteralValue, Statement};
 use crate::{parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
 use miette::{Diagnostic, IntoDiagnostic, SourceSpan};
@@ -270,27 +270,29 @@ pub struct Interpreter<'de> {
 }
 
 impl<'de> Interpreter<'de> {
+    fn function(&mut self, function: &Function<'de>) {
+        let Function {
+            name,
+            arguments,
+            body,
+        } = function;
+        self.scope.define(
+            name,
+            Value::Closure {
+                name,
+                arguments: arguments.clone(),
+                body: body.clone(),
+                environment: self.scope.clone(),
+            },
+        );
+    }
+
     pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Value<'de>>> {
         for d in &prog.0 {
-            use parser::Declaration::*;
             match d {
-                Function {
-                    name,
-                    arguments,
-                    body,
-                } => {
-                    self.scope.define(
-                        name,
-                        Value::Closure {
-                            name,
-                            arguments: arguments.clone(),
-                            body: body.clone(),
-                            environment: self.scope.clone(),
-                        },
-                    );
-                }
+                Declaration::Function(f) => self.function(f),
 
-                Variable(name, expr) => {
+                Declaration::Variable(name, expr) => {
                     let value = if let Some(expr) = expr {
                         self.expression(expr)?
                     } else {
@@ -299,7 +301,7 @@ impl<'de> Interpreter<'de> {
                     self.scope.define(name, value);
                 }
 
-                Statement(s) => {
+                Declaration::Statement(s) => {
                     // Statement was a return
                     if let Some(value) = self.statement(s)? {
                         return Ok(Some(value));

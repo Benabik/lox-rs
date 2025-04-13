@@ -19,13 +19,36 @@ impl Display for Block<'_> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Function<'de> {
+    pub name: &'de str,
+    pub arguments: Vec<&'de str>,
+    pub body: Block<'de>,
+}
+
+impl Display for Function<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Function {
+            name,
+            arguments,
+            body,
+        } = self;
+        write!(f, "(fun {name} (")?;
+        let mut iter = arguments.iter();
+        if let Some(first) = iter.next() {
+            first.fmt(f)?;
+        }
+        for i in iter {
+            write!(f, " {i}")?;
+        }
+        write!(f, ") {body})")
+    }
+}
+
 #[derive(Clone, Debug, From, PartialEq)]
 pub enum Declaration<'de> {
-    Function {
-        name: &'de str,
-        arguments: Vec<&'de str>,
-        body: Block<'de>,
-    },
+    #[from]
+    Function(Function<'de>),
     #[from(forward)]
     Statement(Statement<'de>),
     Variable(&'de str, Option<Expression<'de>>),
@@ -34,17 +57,7 @@ pub enum Declaration<'de> {
 impl Display for Declaration<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Declaration::Function { name, arguments, body } => {
-                write!(f, "(fun {name} (")?;
-                let mut iter = arguments.iter();
-                if let Some(first) = iter.next() {
-                    first.fmt(f)?;
-                }
-                for i in iter {
-                    write!(f, " {i}")?;
-                }
-                write!(f, ") {body})")
-            }
+            Declaration::Function(func) => func.fmt(f),
             Declaration::Variable(name, expr) => {
                 write!(f, "(var {}", name)?;
                 if let Some(expr) = expr {
@@ -460,34 +473,43 @@ impl<'de> Parser<'de> {
         Ok(Declaration::Variable(var.text, expr))
     }
 
+    pub fn function(&mut self) -> miette::Result<Function<'de>> {
+        // NB: fun keyword is not part of function rule
+        let name = self
+            .expect(TokenKind::IDENTIFIER)
+            .wrap_err("in var declaration")?;
+
+        let mut arguments = Vec::new();
+        self.expect(TokenKind::LEFT_PAREN)
+            .wrap_err("in function declaration")?;
+        while !self.peek_for(TokenKind::RIGHT_PAREN) {
+            let arg = self
+                .expect(TokenKind::IDENTIFIER)
+                .wrap_err("in function declaration")?;
+            arguments.push(arg.text);
+
+            if self.peek_for(TokenKind::COMMA) {
+                self.lexer.next(); // discard COMMA
+            } else {
+                break;
+            }
+        }
+        self.expect(TokenKind::RIGHT_PAREN)
+            .wrap_err("in function declaration")?;
+
+        let body = self.block().wrap_err("in function declaration")?;
+        Ok(Function {
+            name: name.text,
+            arguments,
+            body,
+        })
+    }
+
     pub fn declaration(&mut self) -> miette::Result<Declaration<'de>> {
         let ret = match self.peek_kind() {
             Some(TokenKind::FUN) => {
                 self.lexer.next(); // Discard FUN
-                let name = self
-                    .expect(TokenKind::IDENTIFIER)
-                    .wrap_err("in var declaration")?;
-
-                let mut arguments = Vec::new();
-                self.expect(TokenKind::LEFT_PAREN).wrap_err("in function declaration")?;
-                while !self.peek_for(TokenKind::RIGHT_PAREN) {
-                    let arg = self.expect(TokenKind::IDENTIFIER).wrap_err("in function declaration")?;
-                    arguments.push(arg.text);
-
-                    if self.peek_for(TokenKind::COMMA) {
-                        self.lexer.next(); // discard COMMA
-                    } else {
-                        break;
-                    }
-                }
-                self.expect(TokenKind::RIGHT_PAREN).wrap_err("in function declaration")?;
-
-                let body = self.block().wrap_err("in function declaration")?;
-                Declaration::Function {
-                    name: name.text,
-                    arguments,
-                    body,
-                }
+                Declaration::Function(self.function()?)
             }
             Some(TokenKind::VAR) => self.var_declaration()?,
             _ => Declaration::Statement(self.statement().wrap_err("in declaration")?),
@@ -699,7 +721,8 @@ impl<'de> Parser<'de> {
                                 break;
                             }
                         }
-                        self.expect(TokenKind::RIGHT_PAREN).wrap_err("in function call")?;
+                        self.expect(TokenKind::RIGHT_PAREN)
+                            .wrap_err("in function call")?;
 
                         lhs = Expression::Call {
                             callee: Box::new(lhs),
