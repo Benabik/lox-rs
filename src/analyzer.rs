@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use log::{debug, info};
 use miette::{Diagnostic, SourceSpan};
 use thiserror::Error;
 
@@ -56,6 +57,7 @@ impl<'de> Analyzer<'de> {
     }
 
     fn enter_scope(&mut self) {
+        debug!("entering scope");
         self.scopes.push(Default::default())
     }
 
@@ -64,10 +66,12 @@ impl<'de> Analyzer<'de> {
     }
 
     fn leave_scope(&mut self) {
+        debug!("leaving scope depth {}", self.depth());
         self.scopes.pop();
     }
 
     fn declare_variable(&mut self, name: &'de str) {
+        debug!("declaring variable {name} at 0/{}", self.depth());
         self.scopes
             .last_mut()
             .expect("in scope")
@@ -75,6 +79,7 @@ impl<'de> Analyzer<'de> {
     }
 
     fn define_variable(&mut self, name: &'de str) {
+        debug!("defining variable {name} at 0/{}", self.depth());
         self.scopes.last_mut().expect("in scope").insert(name, true);
     }
 
@@ -151,6 +156,10 @@ impl<'de> Analyzer<'de> {
             .rev()
             .enumerate()
             .find_map(|(depth, scope)| Some(depth).filter(|_| scope.contains_key(name)))
+            .map(|depth| {
+                info!("resolved {name} at {depth}/{}", self.depth());
+                depth
+            })
             .ok_or_else(|| UndefinedVariableError::new(name, origin))?;
         if self.depths.insert(origin.clone(), depth).is_some() {
             let (line, col) = origin.position();

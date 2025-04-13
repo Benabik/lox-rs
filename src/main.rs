@@ -40,6 +40,8 @@ fn read_file(filename: &PathBuf) -> miette::Result<String> {
 }
 
 fn main() -> miette::Result<()> {
+    env_logger::init();
+
     let args = Args::parse();
 
     // Read file

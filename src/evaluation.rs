@@ -6,6 +6,7 @@ use std::time::SystemTime;
 use crate::parser::{Block, Expression, LiteralValue, Statement};
 use crate::{analyzer::Analyzer, parser, SourceLoc, WithSourceLoc};
 use derive_more::{Display, From};
+use log::{debug, error};
 use miette::{Diagnostic, IntoDiagnostic, SourceSpan};
 use thiserror::Error;
 
@@ -219,13 +220,18 @@ impl<'de> Environment<'de> {
         if depth == 0 {
             values.get(name).cloned()
         } else {
-            parent
-                .as_mut()
-                .and_then(|parent| parent.get_impl(name, depth - 1))
+            match parent.as_mut() {
+                Some(parent) => parent.get_impl(name, depth - 1),
+                None => {
+                    error!("Ran out of scopes");
+                    None
+                }
+            }
         }
     }
 
     fn get(&mut self, name: &str, depth: usize, origin: &SourceLoc) -> miette::Result<Value<'de>> {
+        debug!("Getting {name} {depth}/{}", self.depth());
         self.get_impl(name, depth)
             .ok_or_else(|| self.missing_variable(name, depth, origin))
     }
@@ -241,9 +247,13 @@ impl<'de> Environment<'de> {
                 value
             })
         } else {
-            parent
-                .as_mut()
-                .and_then(|parent| parent.assign_impl(name, depth - 1, value))
+            match parent.as_mut() {
+                Some(parent) => parent.assign_impl(name, depth - 1, value),
+                None => {
+                    error!("Ran out of scopes");
+                    None
+                }
+            }
         }
     }
 
@@ -254,11 +264,13 @@ impl<'de> Environment<'de> {
         value: Value<'de>,
         origin: &SourceLoc,
     ) -> miette::Result<Value<'de>> {
+        debug!("Assigning {name} {depth}/{}: {value}", self.depth());
         self.assign_impl(name, depth, value)
             .ok_or_else(|| self.missing_variable(name, depth, origin))
     }
 
     fn define(&mut self, name: &'de str, value: Value<'de>) {
+        debug!("Defining {name} at 0/{}", self.depth());
         self.0.borrow_mut().values.insert(name, value);
     }
 }
@@ -301,6 +313,7 @@ impl<'de> Interpreter<'de> {
                     arguments,
                     body,
                 } => {
+                    debug!("Saving {name} scope: depth {}", self.scope.depth());
                     self.scope.define(
                         name,
                         Value::Closure {
@@ -336,8 +349,10 @@ impl<'de> Interpreter<'de> {
         use parser::Statement::*;
         let ret = match stmt {
             Block(block) => {
+                debug!("Entering block scope");
                 self.scope = self.scope.push();
                 let ret = self.block(block)?;
+                debug!("Leaving block scope");
                 self.scope = self.scope.pop().expect("exited top scope");
                 ret
             }
@@ -430,17 +445,19 @@ impl<'de> Interpreter<'de> {
                         return body(&arguments);
                     }
                     Value::Closure {
+                        name,
                         body,
                         arguments: names,
                         environment: parent,
-                        ..
                     } => {
                         let outer = self.scope.clone();
+                        debug!("Entering {name} scope");
                         self.scope = parent.push();
                         for (name, value) in names.iter().zip(arguments) {
                             self.scope.define(name, value);
                         }
                         let ret = self.block(&body)?;
+                        debug!("Leaving {name} scope");
                         self.scope = outer;
                         ret.unwrap_or_default()
                     }
