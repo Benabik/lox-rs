@@ -1,13 +1,37 @@
 use std::collections::HashMap;
 
 use log::{debug, info};
+use miette::{Diagnostic, SourceSpan};
+use thiserror::Error;
 
 use crate::{
     parser::{Block, Declaration, Expression, Function, Statement},
     SourceLoc,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Diagnostic, Debug, Error)]
+#[error("Can't read local variable '{name}' in its own initializer")]
+pub struct UndefinedVariableError {
+    name: String,
+
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl UndefinedVariableError {
+    fn new<T: ToString>(name: T, origin: &SourceLoc) -> Self {
+        Self {
+            name: name.to_string(),
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Analyzer<'de> {
     scopes: Vec<HashMap<&'de str, bool>>,
     depths: HashMap<SourceLoc<'de>, usize>,
@@ -17,14 +41,14 @@ impl<'de> Analyzer<'de> {
     pub fn new_block(block: &Block<'de>) -> miette::Result<Self> {
         let mut ret = Self::default();
         ret.block(block)?;
-        assert!(ret.depth() == 1, "Dangling scope!");
+        assert!(ret.depth() == 0, "Dangling scope!");
         Ok(ret)
     }
 
     pub fn new_expression(expr: &Expression<'de>) -> miette::Result<Self> {
         let mut ret = Self::default();
         ret.expression(expr)?;
-        assert!(ret.depth() == 1, "Dangling scope!");
+        assert!(ret.depth() == 0, "Dangling scope!");
         Ok(ret)
     }
 
@@ -48,15 +72,12 @@ impl<'de> Analyzer<'de> {
 
     fn declare_variable(&mut self, name: &'de str) {
         debug!("declaring variable {name} at 0/{}", self.depth());
-        self.scopes
-            .last_mut()
-            .expect("in scope")
-            .insert(name, false);
+        self.scopes.last_mut().map(|s| s.insert(name, false));
     }
 
     fn define_variable(&mut self, name: &'de str) {
         debug!("defining variable {name} at 0/{}", self.depth());
-        self.scopes.last_mut().expect("in scope").insert(name, true);
+        self.scopes.last_mut().map(|s| s.insert(name, true));
     }
 
     pub fn block(&mut self, block: &Block<'de>) -> miette::Result<()> {
@@ -126,23 +147,28 @@ impl<'de> Analyzer<'de> {
         }
     }
 
-    fn resolve_variable(&mut self, name: &str, origin: &SourceLoc<'de>) {
-        let Some(depth) = self
+    fn resolve_variable(&mut self, name: &str, origin: &SourceLoc<'de>) -> miette::Result<()> {
+        // Iterate back through scopes, returning the first value and its depth
+        match self
             .scopes
             .iter()
             .rev()
             .enumerate()
-            .find_map(|(depth, scope)| Some(depth).filter(|_| scope.contains_key(name)))
-            .inspect(|depth| {
+            .find_map(|(depth, scope)| scope.get(name).map(|init| (depth, init)))
+        {
+            Some((depth, true)) => {
                 info!("resolved {name} at {depth}/{}", self.depth());
-            }) else {
-                // Failure to resolve falls back to global lookup
+                if self.depths.insert(origin.clone(), depth).is_some() {
+                    let (line, col) = origin.position();
+                    panic!("Revisiting {name} at {line}:{col}");
+                }
+                Ok(())
+            }
+            Some((_, false)) => Err(UndefinedVariableError::new(name, origin).into()),
+            None => {
                 info!("resolved {name} as global");
-                return;
-            };
-        if self.depths.insert(origin.clone(), depth).is_some() {
-            let (line, col) = origin.position();
-            panic!("Revisiting {name} at {line}:{col}");
+                Ok(())
+            }
         }
     }
 
@@ -150,13 +176,13 @@ impl<'de> Analyzer<'de> {
         match expression {
             // Variables and assignment need depth updated
             Expression::Variable { name, origin } => {
-                self.resolve_variable(name, origin);
+                self.resolve_variable(name, origin)?;
                 Ok(())
-            },
+            }
             Expression::This(_) => todo!(),
 
             Expression::Assign { name, expr, origin } => {
-                self.resolve_variable(name, origin);
+                self.resolve_variable(name, origin)?;
                 self.expression(expr)
             }
             Expression::AssignProp { .. } => todo!(),
@@ -178,17 +204,5 @@ impl<'de> Analyzer<'de> {
             }
             Expression::Property { .. } => todo!(),
         }
-    }
-}
-
-impl Default for Analyzer<'_> {
-    fn default() -> Self {
-        let mut ret = Self {
-            scopes: Default::default(),
-            depths: Default::default(),
-        };
-        ret.enter_scope();
-        ret.define_variable("clock");
-        ret
     }
 }
