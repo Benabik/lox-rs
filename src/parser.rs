@@ -24,6 +24,7 @@ pub struct Function<'de> {
     pub name: &'de str,
     pub arguments: Vec<&'de str>,
     pub body: Block<'de>,
+    pub origin: SourceLoc<'de>,
 }
 
 impl Display for Function<'_> {
@@ -32,6 +33,7 @@ impl Display for Function<'_> {
             name,
             arguments,
             body,
+            ..
         } = self;
         write!(f, "(fun {name} (")?;
         let mut iter = arguments.iter();
@@ -50,26 +52,31 @@ pub enum Declaration<'de> {
     Class {
         name: &'de str,
         methods: Vec<Function<'de>>,
+        origin: SourceLoc<'de>,
     },
     #[from]
     Function(Function<'de>),
     #[from(forward)]
     Statement(Statement<'de>),
-    Variable(&'de str, Option<Expression<'de>>),
+    Variable {
+        name: &'de str,
+        init: Option<Expression<'de>>,
+        origin: SourceLoc<'de>,
+    },
 }
 
 impl Display for Declaration<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Declaration::Class { name, methods } => {
+            Declaration::Class { name, methods, .. } => {
                 write!(f, "(class {}", name)?;
                 methods.iter().try_for_each(|m| m.fmt(f))?;
                 write!(f, ")")
             }
             Declaration::Function(func) => func.fmt(f),
-            Declaration::Variable(name, expr) => {
+            Declaration::Variable { name, init, .. } => {
                 write!(f, "(var {}", name)?;
-                if let Some(expr) = expr {
+                if let Some(expr) = init {
                     write!(f, " {expr}")?;
                 }
                 write!(f, ")")
@@ -500,7 +507,11 @@ impl<'de> Parser<'de> {
         };
         self.expect(TokenKind::SEMICOLON)
             .wrap_err("in var declaration")?;
-        Ok(Declaration::Variable(var.text, expr))
+        Ok(Declaration::Variable {
+            name: var.text,
+            init: expr,
+            origin: var.origin,
+        })
     }
 
     pub fn function(&mut self) -> miette::Result<Function<'de>> {
@@ -532,6 +543,7 @@ impl<'de> Parser<'de> {
             name: name.text,
             arguments,
             body,
+            origin: name.origin,
         })
     }
 
@@ -539,7 +551,7 @@ impl<'de> Parser<'de> {
         let ret = match self.peek_kind() {
             Some(TokenKind::CLASS) => {
                 self.lexer.next(); // Discard CLASS
-                let Token { text, .. } = self.expect(TokenKind::IDENTIFIER)?;
+                let Token { text, origin, .. } = self.expect(TokenKind::IDENTIFIER)?;
                 self.expect(TokenKind::LEFT_BRACE)?;
 
                 let mut methods = Vec::new();
@@ -551,6 +563,7 @@ impl<'de> Parser<'de> {
                 Declaration::Class {
                     name: text,
                     methods,
+                    origin,
                 }
             }
             Some(TokenKind::FUN) => {

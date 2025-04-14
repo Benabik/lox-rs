@@ -10,6 +10,28 @@ use crate::{
 };
 
 #[derive(Diagnostic, Debug, Error)]
+#[error("Already a variable '{name}' with this name in this scope")]
+pub struct RedeclaredVariableError {
+    name: String,
+
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl RedeclaredVariableError {
+    fn new<T: ToString>(name: T, origin: &SourceLoc) -> Self {
+        Self {
+            name: name.to_string(),
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+
+#[derive(Diagnostic, Debug, Error)]
 #[error("Can't read local variable '{name}' in its own initializer")]
 pub struct UndefinedVariableError {
     name: String,
@@ -70,14 +92,43 @@ impl<'de> Analyzer<'de> {
         self.scopes.pop();
     }
 
-    fn declare_variable(&mut self, name: &'de str) {
-        debug!("declaring variable {name} at 0/{}", self.depth());
-        self.scopes.last_mut().map(|s| s.insert(name, false));
+    fn setup_variable(
+        &mut self,
+        name: &'de str,
+        origin: &SourceLoc<'de>,
+        defined: bool,
+    ) -> miette::Result<()> {
+        let Some(scope) = self.scopes.last_mut() else {
+            // Global
+            return Ok(());
+        };
+
+        // Compare what we're doing to the current state
+        match (defined, scope.insert(name, defined)) {
+            (_, Some(true)) => Err(RedeclaredVariableError::new(name, origin).into()),
+            (false, Some(false)) => panic!("Redeclaring undefined variable?"),
+            (true, Some(false)) => Ok(()), // Defining a declared
+            (_, None) => Ok(()),           // New variable
+        }
+        // }).ok_or_else(||
     }
 
-    fn define_variable(&mut self, name: &'de str) {
+    fn declare_variable(
+        &mut self,
+        name: &'de str,
+        origin: &SourceLoc<'de>,
+    ) -> Result<(), miette::Error> {
+        debug!("declaring variable {name} at 0/{}", self.depth());
+        self.setup_variable(name, origin, false)
+    }
+
+    fn define_variable(
+        &mut self,
+        name: &'de str,
+        origin: &SourceLoc<'de>,
+    ) -> Result<(), miette::Error> {
         debug!("defining variable {name} at 0/{}", self.depth());
-        self.scopes.last_mut().map(|s| s.insert(name, true));
+        self.setup_variable(name, origin, true)
     }
 
     pub fn block(&mut self, block: &Block<'de>) -> miette::Result<()> {
@@ -91,24 +142,22 @@ impl<'de> Analyzer<'de> {
                 name,
                 arguments,
                 body,
+                origin,
             }) => {
-                self.define_variable(name);
+                self.define_variable(name, origin)?;
                 self.enter_scope();
                 for arg in arguments {
-                    self.define_variable(arg);
+                    self.define_variable(arg, origin)?;
                 }
                 self.block(body)?;
                 self.leave_scope();
                 Ok(())
             }
             Declaration::Statement(statement) => self.statement(statement),
-            Declaration::Variable(name, expression) => {
-                self.declare_variable(name);
-                expression
-                    .as_ref()
-                    .map(|e| self.expression(e))
-                    .transpose()?;
-                self.define_variable(name);
+            Declaration::Variable { name, init, origin } => {
+                self.declare_variable(name, origin)?;
+                init.as_ref().map(|e| self.expression(e)).transpose()?;
+                self.define_variable(name, origin)?;
                 Ok(())
             }
         }

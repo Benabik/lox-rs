@@ -394,6 +394,7 @@ impl<'de> Interpreter<'de> {
             name,
             arguments,
             body,
+            ..
         } = function;
         Closure {
             name,
@@ -406,7 +407,7 @@ impl<'de> Interpreter<'de> {
     pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Pointer<'de>>> {
         for d in &prog.0 {
             match d {
-                Declaration::Class { name, methods } => {
+                Declaration::Class { name, methods, .. } => {
                     let methods = methods.iter().map(|f| (f.name, self.function(f))).collect();
                     self.scope.define(name, Class { name, methods });
                 }
@@ -415,8 +416,8 @@ impl<'de> Interpreter<'de> {
                     self.scope.define(f.name, f);
                 }
 
-                Declaration::Variable(name, expr) => {
-                    let value = if let Some(expr) = expr {
+                Declaration::Variable { name, init, .. } => {
+                    let value = if let Some(expr) = init {
                         self.expression(expr)?
                     } else {
                         Default::default()
