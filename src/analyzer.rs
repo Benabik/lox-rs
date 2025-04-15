@@ -162,26 +162,38 @@ impl<'de> Analyzer<'de> {
         block.0.iter().try_for_each(|s| self.declaration(s))
     }
 
+    fn function(&mut self, func: &Function<'de>) -> miette::Result<()> {
+        let Function {
+            name,
+            arguments,
+            body,
+            origin,
+        } = func;
+        self.define_variable(name, origin)?;
+        self.enter_scope();
+        for arg in arguments {
+            self.define_variable(arg, origin)?;
+        }
+        let outer = std::mem::replace(&mut self.context, Context::Function);
+        self.block(body)?;
+        self.context = outer;
+        self.leave_scope();
+        Ok(())
+    }
+
     fn declaration(&mut self, decl: &Declaration<'de>) -> miette::Result<()> {
         match decl {
-            Declaration::Class { .. } => todo!(),
-            Declaration::Function(Function {
-                name,
-                arguments,
-                body,
-                origin,
-            }) => {
+            Declaration::Class {
+                name, methods, origin, ..
+            } => {
                 self.define_variable(name, origin)?;
                 self.enter_scope();
-                for arg in arguments {
-                    self.define_variable(arg, origin)?;
-                }
-                let outer = std::mem::replace(&mut self.context, Context::Function);
-                self.block(body)?;
-                self.context = outer;
+                self.define_variable("this", origin)?;
+                methods.iter().try_for_each(|f| self.function(f))?;
                 self.leave_scope();
                 Ok(())
             }
+            Declaration::Function(f) => self.function(f),
             Declaration::Statement(statement) => self.statement(statement),
             Declaration::Variable { name, init, origin } => {
                 self.declare_variable(name, origin)?;
@@ -258,17 +270,18 @@ impl<'de> Analyzer<'de> {
     pub fn expression(&mut self, expression: &Expression<'de>) -> miette::Result<()> {
         match expression {
             // Variables and assignment need depth updated
-            Expression::Variable { name, origin } => {
-                self.resolve_variable(name, origin)?;
-                Ok(())
-            }
-            Expression::This(_) => todo!(),
+            Expression::Variable { name, origin } => self.resolve_variable(name, origin),
+            // TODO: Check for invalid this
+            Expression::This(origin) => self.resolve_variable("this", origin),
 
             Expression::Assign { name, expr, origin } => {
                 self.resolve_variable(name, origin)?;
                 self.expression(expr)
             }
-            Expression::AssignProp { .. } => todo!(),
+            Expression::AssignProp { object, expr, .. } => {
+                self.expression(object)?;
+                self.expression(expr)
+            }
 
             // Literals require no anaylsis
             Expression::Literal { .. } => Ok(()),
@@ -285,7 +298,7 @@ impl<'de> Analyzer<'de> {
                 self.expression(callee)?;
                 arguments.0.iter().try_for_each(|e| self.expression(e))
             }
-            Expression::Property { .. } => todo!(),
+            Expression::Property { object, .. } => self.expression(object),
         }
     }
 }
