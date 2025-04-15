@@ -10,6 +10,25 @@ use crate::{
 };
 
 #[derive(Diagnostic, Debug, Error)]
+#[error("Can't return from top-level code.")]
+pub struct InvalidReturnError {
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl InvalidReturnError {
+    fn new(origin: &SourceLoc) -> Self {
+        Self {
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+
+#[derive(Diagnostic, Debug, Error)]
 #[error("Already a variable '{name}' with this name in this scope")]
 pub struct RedeclaredVariableError {
     name: String,
@@ -53,8 +72,16 @@ impl UndefinedVariableError {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Context {
+    #[default]
+    None,
+    Function,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Analyzer<'de> {
+    context: Context,
     scopes: Vec<HashMap<&'de str, bool>>,
     depths: HashMap<SourceLoc<'de>, usize>,
 }
@@ -149,7 +176,9 @@ impl<'de> Analyzer<'de> {
                 for arg in arguments {
                     self.define_variable(arg, origin)?;
                 }
+                let outer = std::mem::replace(&mut self.context, Context::Function);
                 self.block(body)?;
+                self.context = outer;
                 self.leave_scope();
                 Ok(())
             }
@@ -176,6 +205,7 @@ impl<'de> Analyzer<'de> {
                 condition,
                 then,
                 other,
+                ..
             } => {
                 self.expression(condition)?;
                 self.statement(then)?;
@@ -183,7 +213,9 @@ impl<'de> Analyzer<'de> {
             }
             Statement::Print(expression) => self.expression(expression),
             Statement::Return { expression, origin } => {
-                // TODO: Return check
+                if self.context == Context::None {
+                    return Err(InvalidReturnError::new(origin).into());
+                }
                 expression
                     .as_ref()
                     .map(|e| self.expression(e))
