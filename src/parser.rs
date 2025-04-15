@@ -9,6 +9,12 @@ use thiserror::Error;
 #[derive(Clone, Debug, From, PartialEq)]
 pub struct Block<'de>(pub Vec<Declaration<'de>>);
 
+impl<'de> Block<'de> {
+    fn into_statement(self, origin: SourceLoc<'de>) -> Statement<'de> {
+        Statement::Block { body: self, origin }
+    }
+}
+
 impl Display for Block<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "(block")?;
@@ -65,6 +71,16 @@ pub enum Declaration<'de> {
     },
 }
 
+impl<'de> Declaration<'de> {
+    fn origin(&self) -> &SourceLoc<'de> {
+        match self {
+            Declaration::Class { origin, .. } | Declaration::Variable { origin, .. } => origin,
+            Declaration::Function(function) => &function.origin,
+            Declaration::Statement(statement) => statement.origin(),
+        }
+    }
+}
+
 impl Display for Declaration<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -87,34 +103,54 @@ impl Display for Declaration<'_> {
 }
 
 #[derive(Clone, Debug, From, PartialEq)]
-#[from(forward)]
 pub enum Statement<'de> {
-    Block(Block<'de>),
+    #[from(forward)]
+    Block {
+        body: Block<'de>,
+        origin: SourceLoc<'de>,
+    },
+    #[from(forward)]
     Expression(Expression<'de>),
     If {
         condition: Expression<'de>,
         then: Box<Statement<'de>>,
         other: Option<Box<Statement<'de>>>,
+        origin: SourceLoc<'de>,
     },
-    #[from(ignore)]
     Print(Expression<'de>),
-    #[from(ignore)]
-    Return(Option<Expression<'de>>),
+    Return {
+        expression: Option<Expression<'de>>,
+        origin: SourceLoc<'de>,
+    },
     While {
         condition: Expression<'de>,
         body: Box<Statement<'de>>,
+        origin: SourceLoc<'de>,
     },
+}
+
+impl<'de> Statement<'de> {
+    fn origin(&self) -> &SourceLoc<'de> {
+        match self {
+            Statement::Expression(expression) | Statement::Print(expression) => expression.origin(),
+            Statement::Block { origin, .. }
+            | Statement::If { origin, .. }
+            | Statement::Return { origin, .. }
+            | Statement::While { origin, .. } => origin,
+        }
+    }
 }
 
 impl Display for Statement<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Statement::Block(block) => block.fmt(f),
+            Statement::Block { body, .. } => body.fmt(f),
             Statement::Expression(e) => e.fmt(f),
             Statement::If {
                 condition,
                 then,
                 other,
+                ..
             } => {
                 write!(f, "(if {condition} {then}")?;
                 if let Some(other) = other {
@@ -123,13 +159,21 @@ impl Display for Statement<'_> {
                 write!(f, ")")
             }
             Statement::Print(e) => write!(f, "(print {e})"),
-            Statement::Return(Some(e)) => write!(f, "(return {e})"),
-            Statement::Return(None) => write!(f, "(return)"),
-            Statement::While { condition, body } => write!(f, "(while {condition} {body})"),
+            Statement::Return {
+                expression: Some(e),
+                ..
+            } => write!(f, "(return {e})"),
+            Statement::Return {
+                expression: None, ..
+            } => write!(f, "(return)"),
+            Statement::While {
+                condition, body, ..
+            } => write!(f, "(while {condition} {body})"),
         }
     }
 }
 
+/// Mostly a wrapper for display purposes
 #[derive(Clone, Debug, From, PartialEq)]
 pub struct Arguments<'de>(pub Vec<Expression<'de>>);
 
@@ -214,16 +258,16 @@ pub enum Expression<'de> {
 impl<'de> Expression<'de> {
     pub fn origin(&self) -> &SourceLoc<'de> {
         match self {
-            Expression::Literal { origin, .. } => origin,
-            Expression::Unary { origin, .. } => origin,
-            Expression::Binary { origin, .. } => origin,
-            Expression::Grouping { origin, .. } => origin,
-            Expression::Variable { origin, .. } => origin,
-            Expression::Assign { origin, .. } => origin,
-            Expression::AssignProp { origin, .. } => origin,
-            Expression::Call { origin, .. } => origin,
-            Expression::Property { origin, .. } => origin,
-            Expression::This(origin) => origin,
+            Expression::Literal { origin, .. }
+            | Expression::Unary { origin, .. }
+            | Expression::Binary { origin, .. }
+            | Expression::Grouping { origin, .. }
+            | Expression::Variable { origin, .. }
+            | Expression::Assign { origin, .. }
+            | Expression::AssignProp { origin, .. }
+            | Expression::Call { origin, .. }
+            | Expression::Property { origin, .. }
+            | Expression::This(origin) => origin,
         }
     }
 }
@@ -492,14 +536,14 @@ impl<'de> Parser<'de> {
         Ok(statements.into())
     }
 
-    pub fn block(&mut self) -> miette::Result<Block<'de>> {
-        self.expect(TokenKind::LEFT_BRACE).wrap_err("in block")?;
+    fn block(&mut self) -> miette::Result<(Block<'de>, SourceLoc<'de>)> {
+        let Token { origin, .. } = self.expect(TokenKind::LEFT_BRACE).wrap_err("in block")?;
         let mut statements = Vec::new();
         while !self.peek_for(TokenKind::RIGHT_BRACE) {
             statements.push(self.declaration().wrap_err("in block")?);
         }
         self.expect(TokenKind::RIGHT_BRACE).wrap_err("in block")?;
-        Ok(statements.into())
+        Ok((statements.into(), origin))
     }
 
     fn var_declaration(&mut self) -> miette::Result<Declaration<'de>> {
@@ -546,7 +590,7 @@ impl<'de> Parser<'de> {
         self.expect(TokenKind::RIGHT_PAREN)
             .wrap_err("in function declaration")?;
 
-        let body = self.block().wrap_err("in function declaration")?;
+        let (body, _) = self.block().wrap_err("in function declaration")?;
         Ok(Function {
             name: name.text,
             arguments,
@@ -587,7 +631,7 @@ impl<'de> Parser<'de> {
     pub fn statement(&mut self) -> miette::Result<Statement<'de>> {
         let statement = match self.peek_kind() {
             Some(TokenKind::FOR) => {
-                self.lexer.next(); // Discard FOR
+                let Token { origin, .. } = self.expect_any();
                 self.expect(TokenKind::LEFT_PAREN)
                     .wrap_err("in for statement")?;
 
@@ -634,23 +678,26 @@ impl<'de> Parser<'de> {
                 let mut body = self.statement().wrap_err("in for statement")?;
 
                 if let Some(increment) = increment {
-                    body = Block(vec![body.into(), increment.into()]).into();
+                    let origin = increment.origin().clone();
+                    body = Block(vec![body.into(), increment.into()]).into_statement(origin);
                 }
 
                 body = Statement::While {
                     condition,
                     body: Box::new(body),
+                    origin,
                 };
 
                 if let Some(initializer) = initializer {
-                    body = Block(vec![initializer, body.into()]).into();
+                    let origin = initializer.origin().clone();
+                    body = Block(vec![initializer, body.into()]).into_statement(origin);
                 }
 
                 body
             }
 
             Some(TokenKind::IF) => {
-                self.lexer.next(); // Discard IF
+                let Token { origin, .. } = self.expect_any();
                 self.expect(TokenKind::LEFT_PAREN)
                     .wrap_err("in if statement")?;
                 let condition = self.expression().wrap_err("in if condition")?;
@@ -670,6 +717,7 @@ impl<'de> Parser<'de> {
                     condition,
                     then: Box::new(then),
                     other,
+                    origin,
                 }
             }
 
@@ -684,7 +732,7 @@ impl<'de> Parser<'de> {
             }
 
             Some(TokenKind::RETURN) => {
-                self.lexer.next(); // Discard RETURN
+                let Token { origin, .. } = self.expect_any();
                 let expr = if self.peek_for(TokenKind::SEMICOLON) {
                     None
                 } else {
@@ -692,14 +740,21 @@ impl<'de> Parser<'de> {
                 };
                 self.expect(TokenKind::SEMICOLON)
                     .wrap_err("in return statement")?;
-                Statement::Return(expr)
+                Statement::Return {
+                    expression: expr,
+                    origin,
+                }
             }
 
             Some(TokenKind::WHILE) => {
-                self.lexer.next(); // Discard WHILE
+                let Token { origin, .. } = self.expect_any(); // Discard WHILE
                 let condition = self.expression().wrap_err("in while condition")?;
                 let body = Box::new(self.statement().wrap_err("in while body")?);
-                Statement::While { condition, body }
+                Statement::While {
+                    condition,
+                    body,
+                    origin,
+                }
             }
 
             _ => {

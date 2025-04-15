@@ -165,9 +165,9 @@ impl<'de> Analyzer<'de> {
 
     fn statement(&mut self, statement: &Statement<'de>) -> miette::Result<()> {
         match statement {
-            Statement::Block(block) => {
+            Statement::Block { body, .. } => {
                 self.enter_scope();
-                self.block(block)?;
+                self.block(body)?;
                 self.leave_scope();
                 Ok(())
             }
@@ -182,14 +182,16 @@ impl<'de> Analyzer<'de> {
                 other.as_ref().map(|s| self.statement(s)).unwrap_or(Ok(()))
             }
             Statement::Print(expression) => self.expression(expression),
-            Statement::Return(expression) => {
+            Statement::Return { expression, origin } => {
                 // TODO: Return check
                 expression
                     .as_ref()
                     .map(|e| self.expression(e))
                     .unwrap_or(Ok(()))
             }
-            Statement::While { condition, body } => {
+            Statement::While {
+                condition, body, ..
+            } => {
                 self.expression(condition)?;
                 self.statement(body)
             }

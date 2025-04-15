@@ -439,10 +439,10 @@ impl<'de> Interpreter<'de> {
     fn statement(&mut self, stmt: &Statement<'de>) -> miette::Result<Option<Pointer<'de>>> {
         use parser::Statement::*;
         let ret = match stmt {
-            Block(block) => {
+            Block { body, .. } => {
                 debug!("Entering block scope");
                 self.scope = self.scope.push();
-                let ret = self.block(block)?;
+                let ret = self.block(body)?;
                 debug!("Leaving block scope");
                 self.scope = self.scope.pop().expect("exited top scope");
                 ret
@@ -455,6 +455,7 @@ impl<'de> Interpreter<'de> {
                 condition,
                 then,
                 other,
+                ..
             } => {
                 let s = if self.expression(condition)?.into() {
                     Some(then)
@@ -467,9 +468,16 @@ impl<'de> Interpreter<'de> {
                 println!("{}", self.expression(e)?);
                 None
             }
-            Return(Some(e)) => Some(self.expression(e)?),
-            Return(None) => Some(Default::default()),
-            While { condition, body } => {
+            Return {
+                expression: Some(e),
+                ..
+            } => Some(self.expression(e)?),
+            Return {
+                expression: None, ..
+            } => Some(Default::default()),
+            While {
+                condition, body, ..
+            } => {
                 while self.expression(condition)?.into() {
                     if let Some(value) = self.statement(body)? {
                         return Ok(Some(value));
