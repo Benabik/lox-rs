@@ -448,6 +448,14 @@ impl<'de> Parser<'de> {
         }
     }
 
+    /// Used after peek_for/peek_kind, panics if there is no next token
+    fn expect_any(&mut self) -> Token<'de> {
+        self.lexer
+            .next()
+            .expect("expected Some")
+            .expect("expected Ok")
+    }
+
     pub fn expect(&mut self, expect: TokenKind) -> miette::Result<Token<'de>> {
         let expecting = || format!("expecting {expect:?}");
         match self.lexer.next() {
@@ -601,8 +609,7 @@ impl<'de> Parser<'de> {
 
                 let condition = if self.peek_for(TokenKind::SEMICOLON) {
                     // No condition is infinite loop, so synthesize a true condition
-                    let Token { origin, .. } =
-                        self.lexer.next().expect("peeked some").expect("peeked ok");
+                    let Token { origin, .. } = self.expect_any();
                     Expression::Literal {
                         value: true.into(),
                         origin,
@@ -772,8 +779,7 @@ impl<'de> Parser<'de> {
 
                 Some(TokenKind::LEFT_PAREN) => {
                     // Highest binding power, no check
-                    let Token { origin, .. } =
-                        self.lexer.next().expect("peeked Some").expect("peeked Ok");
+                    let Token { origin, .. } = self.expect_any();
 
                     let mut arguments = Vec::new();
                     while !self.peek_for(TokenKind::RIGHT_PAREN) {
@@ -803,8 +809,7 @@ impl<'de> Parser<'de> {
                         break;
                     }
 
-                    let Token { origin, .. } =
-                        self.lexer.next().expect("peeked Some").expect("peeked Ok");
+                    let Token { origin, .. } = self.expect_any();
 
                     let expr = Box::new(self.expression_bp(r_bp)?);
 
@@ -834,8 +839,7 @@ impl<'de> Parser<'de> {
                     if l_bp < min_bp {
                         break;
                     }
-                    let Token { origin, .. } =
-                        self.lexer.next().expect("peeked Some").expect("peeked Ok");
+                    let Token { origin, .. } = self.expect_any();
 
                     let rhs = self.expression_bp(r_bp)?;
                     lhs = Expression::Binary {
