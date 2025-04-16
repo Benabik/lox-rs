@@ -41,6 +41,12 @@ pub struct Class<'de> {
 }
 
 impl<'de> Class<'de> {
+    fn method(&self, name: &'de str) -> Option<&Closure<'de>> {
+        self.methods
+            .get(name)
+            .or_else(|| self.superclass.as_ref().and_then(|c| c.method(name)))
+    }
+
     fn to_object(this: &Rc<Self>) -> Pointer<'de> {
         Value::Object {
             class: this.clone(),
@@ -605,8 +611,7 @@ impl<'de> Interpreter<'de> {
                 // Extract the initializer if we need it
                 let redirect = if let Value::Class(class) = &*callee.borrow() {
                     class
-                        .methods
-                        .get("init")
+                        .method("init")
                         .map(|init| init.bind(Class::to_object(class)))
                 } else {
                     None
@@ -681,7 +686,7 @@ impl<'de> Interpreter<'de> {
                 properties
                     .get(name)
                     .cloned()
-                    .or_else(|| class.methods.get(name).map(|c| c.bind(object.clone())))
+                    .or_else(|| class.method(name).map(|c| c.bind(object.clone())))
                     .ok_or_else(|| UndefinedPropertyError::new(name, origin))?
             }
 
