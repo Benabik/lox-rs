@@ -624,8 +624,6 @@ impl<'de> Interpreter<'de> {
                         let mut ret = self.block(body)?;
                         if *initializer {
                             debug!("Returning this from initializer");
-                            // Assert, not Err b/c problems here are interpreter bugs
-                            assert!(ret.is_none(), "value returned from initializer");
                             ret = parent.get_raw("this");
                             assert!(ret.is_some(), "no this in class scope");
                         }
