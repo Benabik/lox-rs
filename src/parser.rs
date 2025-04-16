@@ -58,6 +58,7 @@ impl Display for Function<'_> {
 pub enum Declaration<'de> {
     Class {
         name: &'de str,
+        superclass: Option<&'de str>,
         methods: Vec<Function<'de>>,
         origin: SourceLoc<'de>,
     },
@@ -606,8 +607,17 @@ impl<'de> Parser<'de> {
             Some(TokenKind::CLASS) => {
                 self.lexer.next(); // Discard CLASS
                 let Token { text, origin, .. } = self.expect(TokenKind::IDENTIFIER)?;
-                self.expect(TokenKind::LEFT_BRACE)?;
 
+                // Superclass?
+                let superclass = if self.peek_for(TokenKind::LESS) {
+                    self.expect_any();
+                    Some(self.expect(TokenKind::IDENTIFIER)?.text)
+                } else {
+                    None
+                };
+
+                // Class body
+                self.expect(TokenKind::LEFT_BRACE)?;
                 let mut methods = Vec::new();
                 while !self.peek_for(TokenKind::RIGHT_BRACE) {
                     let mut func = self.function()?;
@@ -620,6 +630,7 @@ impl<'de> Parser<'de> {
 
                 Declaration::Class {
                     name: text,
+                    superclass,
                     methods,
                     origin,
                 }

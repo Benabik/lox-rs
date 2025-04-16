@@ -244,10 +244,13 @@ impl<'de> Analyzer<'de> {
         match decl {
             Declaration::Class {
                 name,
+                superclass,
                 methods,
                 origin,
-                ..
             } => {
+                if let Some(superclass) = superclass {
+                    self.resolve_variable(superclass, origin)?;
+                }
                 self.define_variable(name, origin)?;
                 self.enter_scope();
                 self.define_variable("this", origin)?;

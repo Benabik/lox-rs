@@ -36,6 +36,7 @@ impl<'de> Closure<'de> {
 #[display("{name}")]
 pub struct Class<'de> {
     pub name: &'de str,
+    pub superclass: Option<Rc<Class<'de>>>,
     pub methods: HashMap<&'de str, Closure<'de>>,
 }
 
@@ -159,6 +160,18 @@ impl TryFrom<&Pointer<'_>> for f64 {
         match &*value {
             Value::Number(value) => Ok(*value),
             _ => Err(TypeError::new("number", value)),
+        }
+    }
+}
+
+impl<'de> TryFrom<Pointer<'de>> for Rc<Class<'de>> {
+    type Error = TypeError;
+
+    fn try_from(value: Pointer<'de>) -> Result<Self, Self::Error> {
+        let value = value.borrow();
+        match &*value {
+            Value::Class(class) => Ok(class.clone()),
+            _ => Err(TypeError::new("string", value)),
         }
     }
 }
@@ -422,9 +435,27 @@ impl<'de> Interpreter<'de> {
     pub fn block(&mut self, prog: &Block<'de>) -> miette::Result<Option<Pointer<'de>>> {
         for d in &prog.0 {
             match d {
-                Declaration::Class { name, methods, .. } => {
+                Declaration::Class {
+                    name,
+                    superclass,
+                    methods,
+                    origin,
+                } => {
+                    let superclass = if let Some(c) = superclass {
+                        Some(self.get(c, origin)?.try_into()?)
+                    } else {
+                        None
+                    };
+
                     let methods = methods.iter().map(|f| (f.name, self.function(f))).collect();
-                    self.scope.define(name, Class { name, methods });
+                    self.scope.define(
+                        name,
+                        Class {
+                            name,
+                            superclass,
+                            methods,
+                        },
+                    );
                 }
                 Declaration::Function(f) => {
                     let f = self.function(f);
