@@ -29,6 +29,24 @@ impl InvalidReturnError {
 }
 
 #[derive(Diagnostic, Debug, Error)]
+#[error("Can't use 'this' outside of a class.")]
+pub struct InvalidThisError {
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl InvalidThisError {
+    fn new(origin: &SourceLoc) -> Self {
+        Self {
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+#[derive(Diagnostic, Debug, Error)]
 #[error("Already a variable '{name}' with this name in this scope")]
 pub struct RedeclaredVariableError {
     name: String,
@@ -73,15 +91,25 @@ impl UndefinedVariableError {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Context {
+enum FunctionContext {
     #[default]
     None,
     Function,
+    // Book promises more values to come
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ClassContext {
+    #[default]
+    None,
+    Class,
+    // Book promises more values to come
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Analyzer<'de> {
-    context: Context,
+    function: FunctionContext,
+    class: ClassContext,
     scopes: Vec<HashMap<&'de str, bool>>,
     depths: HashMap<SourceLoc<'de>, usize>,
 }
@@ -174,9 +202,9 @@ impl<'de> Analyzer<'de> {
         for arg in arguments {
             self.define_variable(arg, origin)?;
         }
-        let outer = std::mem::replace(&mut self.context, Context::Function);
+        let outer = std::mem::replace(&mut self.function, FunctionContext::Function);
         self.block(body)?;
-        self.context = outer;
+        self.function = outer;
         self.leave_scope();
         Ok(())
     }
@@ -189,7 +217,9 @@ impl<'de> Analyzer<'de> {
                 self.define_variable(name, origin)?;
                 self.enter_scope();
                 self.define_variable("this", origin)?;
+                let outer = std::mem::replace(&mut self.class, ClassContext::Class);
                 methods.iter().try_for_each(|f| self.function(f))?;
+                self.class = outer;
                 self.leave_scope();
                 Ok(())
             }
@@ -225,7 +255,7 @@ impl<'de> Analyzer<'de> {
             }
             Statement::Print(expression) => self.expression(expression),
             Statement::Return { expression, origin } => {
-                if self.context == Context::None {
+                if self.function == FunctionContext::None {
                     return Err(InvalidReturnError::new(origin).into());
                 }
                 expression
@@ -272,7 +302,12 @@ impl<'de> Analyzer<'de> {
             // Variables and assignment need depth updated
             Expression::Variable { name, origin } => self.resolve_variable(name, origin),
             // TODO: Check for invalid this
-            Expression::This(origin) => self.resolve_variable("this", origin),
+            Expression::This(origin) => {
+                if self.class == ClassContext::None {
+                    return Err(InvalidThisError::new(origin).into());
+                }
+                self.resolve_variable("this", origin)
+            }
 
             Expression::Assign { name, expr, origin } => {
                 self.resolve_variable(name, origin)?;
