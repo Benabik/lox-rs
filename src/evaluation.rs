@@ -447,13 +447,23 @@ impl<'de> Interpreter<'de> {
                     methods,
                     origin,
                 } => {
+                    // Create class scope but do not enter to allow superclass lookup
+                    let mut inner = self.scope.push();
                     let superclass = if let Some(c) = superclass {
-                        Some(self.get(c, origin)?.try_into()?)
+                        let class: Rc<Class> = self.get(c, origin)?.try_into()?;
+                        inner.define("super", class.clone());
+                        Some(class)
                     } else {
                         None
                     };
 
+                    debug!("Entering class scope");
+                    self.scope = inner;
+
                     let methods = methods.iter().map(|f| (f.name, self.function(f))).collect();
+                    debug!("Leaving class scope");
+                    self.scope = self.scope.pop().expect("left top scope");
+
                     self.scope.define(
                         name,
                         Class {
@@ -770,6 +780,27 @@ impl<'de> Interpreter<'de> {
                     Multiply => binary_float(lhs, rhs, |x, y| x * y)?,
                     Divide => binary_float(lhs, rhs, |x, y| x / y)?,
                 }
+            }
+
+            Expression::Super { method, origin } => {
+                let depth = self
+                    .analysis
+                    .depth_for(origin)
+                    .expect("super cannot be global");
+                debug!("Getting super {depth}/{}", self.scope.depth());
+                assert!(depth > 0, "super should be outside this");
+                let env = self.scope.ancestor(depth - 1);
+                let obj = env.get_raw("this").expect("this in method binding");
+                let env = env.0.borrow();
+                let env = env.parent.as_ref().expect("class binding");
+                let class: Rc<Class> = env
+                    .get_raw("super")
+                    .expect("super in class binding")
+                    .try_into()?;
+                class
+                    .method(method)
+                    .map(|c| c.bind(obj))
+                    .ok_or_else(|| UndefinedPropertyError::new(method, origin))?
             }
 
             Expression::Variable { name, origin } => self.get(name, origin)?,

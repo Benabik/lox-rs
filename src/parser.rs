@@ -255,6 +255,12 @@ pub enum Expression<'de> {
 
     #[display("this")]
     This(SourceLoc<'de>),
+
+    #[display("super")]
+    Super {
+        method: &'de str,
+        origin: SourceLoc<'de>,
+    },
 }
 
 impl<'de> Expression<'de> {
@@ -269,7 +275,8 @@ impl<'de> Expression<'de> {
             | Expression::AssignProp { origin, .. }
             | Expression::Call { origin, .. }
             | Expression::Property { origin, .. }
-            | Expression::This(origin) => origin,
+            | Expression::Super { origin, .. } => origin,
+            Expression::This(origin) => origin,
         }
     }
 }
@@ -630,7 +637,9 @@ impl<'de> Parser<'de> {
                 // Superclass?
                 let superclass = if self.peek_for(TokenKind::LESS) {
                     self.expect_any();
-                    let Token { text: name, origin, .. } = self.expect(TokenKind::IDENTIFIER)?;
+                    let Token {
+                        text: name, origin, ..
+                    } = self.expect(TokenKind::IDENTIFIER)?;
                     if name == text {
                         return Err(InvalidSuperclassError::new(&origin).into());
                     }
@@ -838,6 +847,13 @@ impl<'de> Parser<'de> {
                     origin,
                 }
             }
+
+            TokenKind::SUPER => {
+                self.expect(TokenKind::DOT)?;
+                let method = self.expect(TokenKind::IDENTIFIER)?.text;
+                Expression::Super { origin, method }
+            }
+
             TokenKind::IDENTIFIER => Expression::Variable { name: text, origin },
             TokenKind::THIS => Expression::This(origin),
             _ => {

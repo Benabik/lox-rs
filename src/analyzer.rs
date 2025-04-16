@@ -253,12 +253,15 @@ impl<'de> Analyzer<'de> {
                 }
                 self.define_variable(name, origin)?;
                 self.enter_scope();
+                self.define_variable("super", origin)?;
+                self.enter_scope();
                 self.define_variable("this", origin)?;
                 let outer = std::mem::replace(&mut self.class, ClassContext::Class);
                 methods
                     .iter()
                     .try_for_each(|f| self.function(f, FunctionContext::Method))?;
                 self.class = outer;
+                self.leave_scope();
                 self.leave_scope();
                 Ok(())
             }
@@ -344,7 +347,12 @@ impl<'de> Analyzer<'de> {
         match expression {
             // Variables and assignment need depth updated
             Expression::Variable { name, origin } => self.resolve_variable(name, origin),
-            // TODO: Check for invalid this
+            Expression::Super { origin, .. } => {
+                if self.class == ClassContext::None {
+                    return Err(InvalidThisError::new(origin).into());
+                }
+                self.resolve_variable("super", origin)
+            }
             Expression::This(origin) => {
                 if self.class == ClassContext::None {
                     return Err(InvalidThisError::new(origin).into());
