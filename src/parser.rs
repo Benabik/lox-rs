@@ -31,6 +31,7 @@ pub struct Function<'de> {
     pub arguments: Vec<&'de str>,
     pub body: Block<'de>,
     pub origin: SourceLoc<'de>,
+    pub initializer: bool,
 }
 
 impl Display for Function<'_> {
@@ -596,6 +597,7 @@ impl<'de> Parser<'de> {
             arguments,
             body,
             origin: name.origin,
+            initializer: false,
         })
     }
 
@@ -608,7 +610,11 @@ impl<'de> Parser<'de> {
 
                 let mut methods = Vec::new();
                 while !self.peek_for(TokenKind::RIGHT_BRACE) {
-                    methods.push(self.function()?);
+                    let mut func = self.function()?;
+                    if func.name == "init" {
+                        func.initializer = true;
+                    }
+                    methods.push(func);
                 }
                 self.lexer.next(); // Discard RIGHT_BRACE
 

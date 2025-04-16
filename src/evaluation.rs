@@ -17,16 +17,18 @@ pub struct Closure<'de> {
     pub arguments: Vec<&'de str>,
     pub body: Block<'de>,
     pub environment: Environment<'de>,
+    pub initializer: bool,
 }
 
 impl<'de> Closure<'de> {
-    pub fn bind(&self, object: impl Into<Pointer<'de>>) -> Self {
+    pub fn bind(&self, object: impl Into<Pointer<'de>>) -> Pointer<'de> {
         let mut environment = self.environment.push();
         environment.define("this", object);
         Self {
             environment,
             ..self.clone()
         }
+        .into()
     }
 }
 
@@ -35,6 +37,16 @@ impl<'de> Closure<'de> {
 pub struct Class<'de> {
     pub name: &'de str,
     pub methods: HashMap<&'de str, Closure<'de>>,
+}
+
+impl<'de> Class<'de> {
+    fn to_object(this: &Rc<Self>) -> Pointer<'de> {
+        Value::Object {
+            class: this.clone(),
+            properties: Default::default(),
+        }
+        .into()
+    }
 }
 
 #[derive(Clone, Default, Debug, Display, From, PartialEq)]
@@ -318,12 +330,13 @@ impl<'de> Environment<'de> {
             .expect("Ran out of scopes")
     }
 
-    fn get(&self, name: &str, origin: &SourceLoc) -> miette::Result<Pointer<'de>> {
+    fn get_raw(&self, name: &str) -> Option<Pointer<'de>> {
         let frame = self.0.borrow();
-        frame
-            .values
-            .get(name)
-            .cloned()
+        frame.values.get(name).cloned()
+    }
+
+    fn get(&self, name: &str, origin: &SourceLoc) -> miette::Result<Pointer<'de>> {
+        self.get_raw(name)
             .ok_or_else(|| UndefinedVariableError::new(name, origin).into())
     }
 
@@ -394,6 +407,7 @@ impl<'de> Interpreter<'de> {
             name,
             arguments,
             body,
+            initializer,
             ..
         } = function;
         Closure {
@@ -401,6 +415,7 @@ impl<'de> Interpreter<'de> {
             arguments: arguments.clone(),
             body: body.clone(),
             environment: self.scope.clone(),
+            initializer: *initializer,
         }
     }
 
@@ -554,11 +569,23 @@ impl<'de> Interpreter<'de> {
                 arguments,
                 origin,
             } => {
-                let callee = self.expression(callee)?;
+                let mut callee = self.expression(callee)?;
+
+                // Extract the initializer if we need it
+                let redirect = if let Value::Class(class) = &*callee.borrow() {
+                    class
+                        .methods
+                        .get("init")
+                        .map(|init| init.bind(Class::to_object(class)))
+                } else {
+                    None
+                };
+                // Can't assign while borrowing, so Option-ally assign here
+                callee = redirect.unwrap_or(callee);
 
                 let arity = match &*callee.borrow() {
                     Value::Builtin { arity, .. } => *arity,
-                    Value::Class { .. } => 0,
+                    Value::Class(_) => 0,
                     Value::Closure(Closure { arguments, .. }) => arguments.len(),
                     _ => {
                         return Err(TypeError::new("function", &callee).with_source_loc(origin));
@@ -580,16 +607,13 @@ impl<'de> Interpreter<'de> {
                     Value::Builtin { body, .. } => {
                         return body(&arguments);
                     }
-                    Value::Class(class) => Value::Object {
-                        class: class.clone(),
-                        properties: Default::default(),
-                    }
-                    .into(),
+                    Value::Class(class) => Class::to_object(class),
                     Value::Closure(Closure {
                         name,
                         body,
                         arguments: names,
                         environment: parent,
+                        initializer,
                     }) => {
                         let outer = self.scope.clone();
                         debug!("Entering {name} scope");
@@ -597,7 +621,14 @@ impl<'de> Interpreter<'de> {
                         for (name, value) in names.iter().zip(arguments) {
                             self.scope.define(name, value);
                         }
-                        let ret = self.block(body)?;
+                        let mut ret = self.block(body)?;
+                        if *initializer {
+                            debug!("Returning this from initializer");
+                            // Assert, not Err b/c problems here are interpreter bugs
+                            assert!(ret.is_none(), "value returned from initializer");
+                            ret = parent.get_raw("this");
+                            assert!(ret.is_some(), "no this in class scope");
+                        }
                         debug!("Leaving {name} scope");
                         self.scope = outer;
                         ret.unwrap_or_default()
@@ -621,12 +652,7 @@ impl<'de> Interpreter<'de> {
                 properties
                     .get(name)
                     .cloned()
-                    .or_else(|| {
-                        class
-                            .methods
-                            .get(name)
-                            .map(|c| c.bind(object.clone()).into())
-                    })
+                    .or_else(|| class.methods.get(name).map(|c| c.bind(object.clone())))
                     .ok_or_else(|| UndefinedPropertyError::new(name, origin))?
             }
 

@@ -10,6 +10,25 @@ use crate::{
 };
 
 #[derive(Diagnostic, Debug, Error)]
+#[error("Can't return a value from an initializer.")]
+pub struct InitializerReturnError {
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl InitializerReturnError {
+    fn new(origin: &SourceLoc) -> Self {
+        Self {
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+
+#[derive(Diagnostic, Debug, Error)]
 #[error("Can't return from top-level code.")]
 pub struct InvalidReturnError {
     #[label("here")]
@@ -95,7 +114,8 @@ enum FunctionContext {
     #[default]
     None,
     Function,
-    // Book promises more values to come
+    Method,
+    Initializer,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -190,19 +210,30 @@ impl<'de> Analyzer<'de> {
         block.0.iter().try_for_each(|s| self.declaration(s))
     }
 
-    fn function(&mut self, func: &Function<'de>) -> miette::Result<()> {
+    fn function(&mut self, func: &Function<'de>, context: FunctionContext) -> miette::Result<()> {
         let Function {
             name,
             arguments,
             body,
             origin,
+            initializer,
         } = func;
         self.define_variable(name, origin)?;
         self.enter_scope();
         for arg in arguments {
             self.define_variable(arg, origin)?;
         }
-        let outer = std::mem::replace(&mut self.function, FunctionContext::Function);
+        let outer = self.function;
+        self.function = if *initializer {
+            assert_eq!(
+                context,
+                FunctionContext::Method,
+                "initializer outside of class"
+            );
+            FunctionContext::Initializer
+        } else {
+            context
+        };
         self.block(body)?;
         self.function = outer;
         self.leave_scope();
@@ -212,18 +243,23 @@ impl<'de> Analyzer<'de> {
     fn declaration(&mut self, decl: &Declaration<'de>) -> miette::Result<()> {
         match decl {
             Declaration::Class {
-                name, methods, origin, ..
+                name,
+                methods,
+                origin,
+                ..
             } => {
                 self.define_variable(name, origin)?;
                 self.enter_scope();
                 self.define_variable("this", origin)?;
                 let outer = std::mem::replace(&mut self.class, ClassContext::Class);
-                methods.iter().try_for_each(|f| self.function(f))?;
+                methods
+                    .iter()
+                    .try_for_each(|f| self.function(f, FunctionContext::Method))?;
                 self.class = outer;
                 self.leave_scope();
                 Ok(())
             }
-            Declaration::Function(f) => self.function(f),
+            Declaration::Function(f) => self.function(f, FunctionContext::Function),
             Declaration::Statement(statement) => self.statement(statement),
             Declaration::Variable { name, init, origin } => {
                 self.declare_variable(name, origin)?;
@@ -255,8 +291,12 @@ impl<'de> Analyzer<'de> {
             }
             Statement::Print(expression) => self.expression(expression),
             Statement::Return { expression, origin } => {
-                if self.function == FunctionContext::None {
-                    return Err(InvalidReturnError::new(origin).into());
+                match self.function {
+                    FunctionContext::None => return Err(InvalidReturnError::new(origin).into()),
+                    FunctionContext::Initializer if expression.is_some() => {
+                        return Err(InitializerReturnError::new(origin).into())
+                    }
+                    _ => (),
                 }
                 expression
                     .as_ref()
