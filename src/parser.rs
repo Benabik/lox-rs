@@ -473,6 +473,25 @@ impl InvalidAssignmentError {
     }
 }
 
+#[derive(Diagnostic, Debug, Error)]
+#[error("A class can't inherit from itself.")]
+pub struct InvalidSuperclassError {
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl InvalidSuperclassError {
+    fn new(origin: &SourceLoc) -> Self {
+        Self {
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+
 pub struct Parser<'de> {
     lexer: &'de mut Lexer<'de>,
 }
@@ -611,7 +630,11 @@ impl<'de> Parser<'de> {
                 // Superclass?
                 let superclass = if self.peek_for(TokenKind::LESS) {
                     self.expect_any();
-                    Some(self.expect(TokenKind::IDENTIFIER)?.text)
+                    let Token { text: name, origin, .. } = self.expect(TokenKind::IDENTIFIER)?;
+                    if name == text {
+                        return Err(InvalidSuperclassError::new(&origin).into());
+                    }
+                    Some(name)
                 } else {
                     None
                 };
