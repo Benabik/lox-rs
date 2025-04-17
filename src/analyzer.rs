@@ -142,7 +142,7 @@ enum ClassContext {
     #[default]
     None,
     Class,
-    // Book promises more values to come
+    Subclass,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -267,15 +267,18 @@ impl<'de> Analyzer<'de> {
                 methods,
                 origin,
             } => {
+                let outer = self.class;
                 if let Some(superclass) = superclass {
                     self.resolve_variable(superclass, origin)?;
+                    self.class = ClassContext::Subclass;
+                } else {
+                    self.class = ClassContext::Class;
                 }
                 self.define_variable(name, origin)?;
                 self.enter_scope();
                 self.define_variable("super", origin)?;
                 self.enter_scope();
                 self.define_variable("this", origin)?;
-                let outer = std::mem::replace(&mut self.class, ClassContext::Class);
                 methods
                     .iter()
                     .try_for_each(|f| self.function(f, FunctionContext::Method))?;
@@ -367,7 +370,7 @@ impl<'de> Analyzer<'de> {
             // Variables and assignment need depth updated
             Expression::Variable { name, origin } => self.resolve_variable(name, origin),
             Expression::Super { origin, .. } => {
-                if self.class == ClassContext::None {
+                if self.class != ClassContext::Subclass {
                     return Err(InvalidSuperError::new(origin).into());
                 }
                 self.resolve_variable("super", origin)
