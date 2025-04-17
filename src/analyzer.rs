@@ -48,6 +48,25 @@ impl InvalidReturnError {
 }
 
 #[derive(Diagnostic, Debug, Error)]
+#[error("Can't use 'super' in a class with no superclass.")]
+pub struct InvalidSuperError {
+    #[label("here")]
+    span: SourceSpan,
+
+    #[source_code]
+    src: String,
+}
+
+impl InvalidSuperError {
+    fn new(origin: &SourceLoc) -> Self {
+        Self {
+            span: origin.into(),
+            src: origin.source.to_string(),
+        }
+    }
+}
+
+#[derive(Diagnostic, Debug, Error)]
 #[error("Can't use 'this' outside of a class.")]
 pub struct InvalidThisError {
     #[label("here")]
@@ -349,7 +368,7 @@ impl<'de> Analyzer<'de> {
             Expression::Variable { name, origin } => self.resolve_variable(name, origin),
             Expression::Super { origin, .. } => {
                 if self.class == ClassContext::None {
-                    return Err(InvalidThisError::new(origin).into());
+                    return Err(InvalidSuperError::new(origin).into());
                 }
                 self.resolve_variable("super", origin)
             }
